@@ -163,7 +163,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     const formattedRoomId = roomId.toUpperCase();
     try {
       const roomRef = ref(db, `rooms/${formattedRoomId}`);
-      let failureMessage: string | null = null;
       const existingSnapshot = await dbGet(roomRef);
 
       if (!existingSnapshot.exists()) {
@@ -171,51 +170,38 @@ export const useGameStore = create<GameState>((set, get) => ({
         return false;
       }
 
-      const result = await runTransaction(roomRef, (currentData: Room | null) => {
-        if (!currentData) {
-          failureMessage = missingRoomMessage(formattedRoomId);
-          return;
-        }
+      const roomData = normalizeRoom(existingSnapshot.val() as Room);
 
-        const roomData = normalizeRoom(currentData);
-
-        if (roomData.status !== 'waiting') {
-          failureMessage = '이미 글쓰기가 시작된 방입니다.';
-          return;
-        }
-
-        const studentKeys = Object.keys(roomData.students);
-
-        if (studentKeys.length >= roomData.maxStudents) {
-          failureMessage = '정원이 가득 찬 방입니다.';
-          return;
-        }
-
-        if (roomData.students[nickname]) {
-          failureMessage = '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.';
-          return;
-        }
-
-        const newStudent: Student = {
-          nickname,
-          joinedAt: Date.now(),
-          isOnline: true,
-        };
-
-        return {
-          ...roomData,
-          students: {
-            ...roomData.students,
-            [nickname]: newStudent,
-          },
-          studentOrder: [...roomData.studentOrder, nickname],
-        };
-      });
-
-      if (!result.committed) {
-        set({ error: failureMessage || '방 입장에 실패했습니다.', loading: false });
+      if (roomData.status !== 'waiting') {
+        set({ error: '이미 글쓰기가 시작된 방입니다.', loading: false });
         return false;
       }
+
+      const studentKeys = Object.keys(roomData.students);
+
+      if (studentKeys.length >= roomData.maxStudents) {
+        set({ error: '정원이 가득 찬 방입니다.', loading: false });
+        return false;
+      }
+
+      if (roomData.students[nickname]) {
+        set({ error: '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.', loading: false });
+        return false;
+      }
+
+      const newStudent: Student = {
+        nickname,
+        joinedAt: Date.now(),
+        isOnline: true,
+      };
+
+      await dbUpdate(roomRef, {
+        students: {
+          ...roomData.students,
+          [nickname]: newStudent,
+        },
+        studentOrder: [...roomData.studentOrder, nickname],
+      });
 
       set({ loading: false });
       return true;
