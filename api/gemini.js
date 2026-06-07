@@ -1,5 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-
 const apiKey = process.env.GEMINI_API_KEY;
 const preferredModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const fallbackModels = [preferredModel, 'gemini-2.0-flash', 'gemini-1.5-flash'].filter(
@@ -8,6 +6,55 @@ const fallbackModels = [preferredModel, 'gemini-2.0-flash', 'gemini-1.5-flash'].
 
 function sendJson(response, statusCode, body) {
   response.status(statusCode).json(body);
+}
+
+async function readRequestBody(request) {
+  if (!request.body) return {};
+  if (typeof request.body === 'object') return request.body;
+  if (typeof request.body === 'string') return JSON.parse(request.body);
+
+  const chunks = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  const rawBody = Buffer.concat(chunks).toString('utf8');
+  return rawBody ? JSON.parse(rawBody) : {};
+}
+
+function extractText(data) {
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  return parts.map(part => part.text || '').join('').trim();
+}
+
+async function generateWithModel(modelName, prompt, jsonMode) {
+  const geminiResponse = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: jsonMode ? { responseMimeType: 'application/json' } : undefined,
+      }),
+    }
+  );
+
+  const data = await geminiResponse.json().catch(() => ({}));
+  if (!geminiResponse.ok) {
+    const message = data?.error?.message || geminiResponse.statusText || 'Gemini REST request failed.';
+    throw new Error(`${geminiResponse.status} ${message}`);
+  }
+
+  const text = extractText(data);
+  if (!text) {
+    throw new Error('Gemini returned an empty response.');
+  }
+
+  return text;
 }
 
 export default async function handler(request, response) {
@@ -22,25 +69,36 @@ export default async function handler(request, response) {
     return;
   }
 
-  const { task, prompt, jsonMode } = request.body || {};
-  if ((task !== 'filter' && task !== 'analysis') || typeof prompt !== 'string' || prompt.length > 20000) {
-    sendJson(response, 400, { error: 'Invalid Gemini request.' });
+  let body;
+  try {
+    body = await readRequestBody(request);
+  } catch (error) {
+    sendJson(response, 400, {
+      error: 'Invalid JSON body.',
+      detail: error instanceof Error ? error.message : String(error),
+    });
     return;
   }
 
-  const ai = new GoogleGenerativeAI(apiKey);
+  const { task, prompt, jsonMode } = body;
+  if ((task !== 'filter' && task !== 'analysis') || typeof prompt !== 'string' || prompt.length > 20000) {
+    sendJson(response, 400, {
+      error: 'Invalid Gemini request.',
+      received: {
+        task,
+        promptType: typeof prompt,
+        promptLength: typeof prompt === 'string' ? prompt.length : null,
+      },
+    });
+    return;
+  }
+
   let lastError;
 
   for (const modelName of fallbackModels) {
     try {
-      const model = ai.getGenerativeModel({ model: modelName });
-
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: jsonMode ? { responseMimeType: 'application/json' } : undefined,
-      });
-
-      sendJson(response, 200, { model: modelName, text: result.response.text() });
+      const text = await generateWithModel(modelName, prompt, Boolean(jsonMode));
+      sendJson(response, 200, { model: modelName, text });
       return;
     } catch (error) {
       lastError = error;
