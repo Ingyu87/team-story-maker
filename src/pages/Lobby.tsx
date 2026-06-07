@@ -38,7 +38,7 @@ export const Lobby: React.FC = () => {
       localStorage.setItem('relay-story-last-nickname', nickname.trim());
       navigate(`/student/${roomId.trim()}/${nickname.trim()}`);
     } else {
-      setErrorMsg(error || '방 입장 신청에 실패했습니다.');
+      setErrorMsg(useGameStore.getState().error || error || '방 입장 신청에 실패했습니다.');
     }
   };
 
