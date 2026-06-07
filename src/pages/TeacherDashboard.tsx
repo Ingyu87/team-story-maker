@@ -222,7 +222,7 @@ export const TeacherDashboard: React.FC = () => {
           </span>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '0.95rem' }} onClick={() => navigate('/')}>
+          <button className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '0.95rem' }} onClick={() => navigate('/join')}>
             로비로 가기
           </button>
           <button className="btn btn-accent" style={{ padding: '8px 16px', fontSize: '0.95rem', background: '#e53935' }} onClick={logOut}>
