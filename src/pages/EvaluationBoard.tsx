@@ -1,18 +1,28 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useGameStore } from '../store/useGameStore';
-import { Star, Award, Home } from 'lucide-react';
-import type { Rubric, Sentence, Evaluation } from '../types/game';
+import { Award, Home, MessageSquare } from 'lucide-react';
+import type { Rubric, Sentence, Evaluation, Room } from '../types/game';
 
 export const EvaluationBoard: React.FC = () => {
   const { roomId, nickname } = useParams<{ roomId: string; nickname: string }>();
   const navigate = useNavigate();
-  const { currentRoom, subscribeRoom, unsubscribeRoom, submitEvaluation } = useGameStore();
+  const { 
+    currentRoom, 
+    projectRooms,
+    subscribeRoom, 
+    unsubscribeRoom, 
+    loadRoomsByProject,
+    submitEvaluation 
+  } = useGameStore();
 
+  // 평가 진행을 위한 로컬 상태
+  const [selectedRoomIdForEval, setSelectedRoomIdForEval] = useState<string | null>(null);
   const [scores, setScores] = useState<{ [rubricId: string]: number }>({});
   const [comment, setComment] = useState('');
-  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [submittedRoomIds, setSubmittedRoomIds] = useState<{ [roomId: string]: boolean }>({});
 
+  // 1. 현재 접속한 모둠방 실시간 구독
   useEffect(() => {
     if (roomId) {
       subscribeRoom(roomId);
@@ -24,193 +34,308 @@ export const EvaluationBoard: React.FC = () => {
     };
   }, [roomId]);
 
-  // 평가 기본 별점(5점) 세팅 및 기제출 여부 확인
+  // 2. 소속된 프로젝트(학급) 전체 모둠방 목록 로드
   useEffect(() => {
-    if (currentRoom && nickname) {
-      const targetRoomId = currentRoom.id;
-      const roomEvaluations = currentRoom.evaluations?.[targetRoomId] || [];
-      const myEval = roomEvaluations.find((e: Evaluation) => e.evaluatorNickname === nickname);
-
-      if (myEval) {
-        setScores(myEval.scores);
-        setComment(myEval.comment || '');
-        setHasSubmitted(true);
-      } else {
-        const initialScores: { [key: string]: number } = {};
-        currentRoom.rubrics.forEach((r: Rubric) => {
-          initialScores[r.id] = 5;
-        });
-        setScores(initialScores);
-      }
+    if (currentRoom && currentRoom.teacherId && currentRoom.projectId) {
+      loadRoomsByProject(currentRoom.teacherId, currentRoom.projectId);
     }
-  }, [currentRoom, nickname]);
+  }, [currentRoom]);
+
+  // 3. 사용자가 각 방에 이미 제출한 동료 평가 내역 캐싱
+  useEffect(() => {
+    if (projectRooms && nickname) {
+      const submittedMap: { [roomId: string]: boolean } = {};
+      projectRooms.forEach((rm: Room) => {
+        // 해당 방의 evaluations 노드에서 내 닉네임이 있는지 확인
+        const evals = rm.evaluations?.[rm.id] || [];
+        const myEval = evals.find((e: Evaluation) => e.evaluatorNickname === nickname);
+        if (myEval) {
+          submittedMap[rm.id] = true;
+        }
+      });
+      setSubmittedRoomIds(submittedMap);
+    }
+  }, [projectRooms, nickname]);
+
+  // 평가 대상 방 선택 시 폼 초기화
+  const handleSelectRoomForEval = (targetRoom: Room) => {
+    if (targetRoom.id === roomId) return; // 본인 방은 평가 불가
+    
+    setSelectedRoomIdForEval(targetRoom.id);
+    setComment('');
+    
+    const evals = targetRoom.evaluations?.[targetRoom.id] || [];
+    const myEval = evals.find((e: Evaluation) => e.evaluatorNickname === nickname);
+    
+    if (myEval) {
+      setScores(myEval.scores);
+      setComment(myEval.comment || '');
+    } else {
+      const initialScores: { [key: string]: number } = {};
+      currentRoom?.rubrics.forEach((r: Rubric) => {
+        initialScores[r.id] = 5;
+      });
+      setScores(initialScores);
+    }
+  };
 
   const handleScoreChange = (rubricId: string, value: number) => {
-    if (hasSubmitted) return; // 이미 제출했다면 수정 불가
+    if (selectedRoomIdForEval && submittedRoomIds[selectedRoomIdForEval]) return; // 기제출 시 수정 불가
     setScores({
       ...scores,
       [rubricId]: value,
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmitEval = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!roomId || !nickname || !currentRoom) return;
+    if (!roomId || !nickname || !selectedRoomIdForEval || !currentRoom) return;
 
-    await submitEvaluation(roomId, currentRoom.id, nickname, scores, comment);
-    setHasSubmitted(true);
-    alert('동료 평가가 성공적으로 등록되었습니다. 감사합니다!');
+    await submitEvaluation(selectedRoomIdForEval, selectedRoomIdForEval, nickname, scores, comment);
+    
+    // 다시 방 리스트 불러와서 갱신
+    if (currentRoom.teacherId && currentRoom.projectId) {
+      await loadRoomsByProject(currentRoom.teacherId, currentRoom.projectId);
+    }
+    
+    setSelectedRoomIdForEval(null);
+    alert('동료 평가가 등록되었습니다! 👍');
   };
 
   if (!currentRoom) {
     return (
       <div className="app-container" style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <p>방 평가 정보를 실시간으로 연결하는 중입니다... ⏳</p>
+        <p>평가 보드 정보를 실시간으로 연결하는 중입니다... ⏳</p>
       </div>
     );
   }
 
-  // 문장 목록을 한 편의 이야기 문단으로 합성
-  const fullStory = currentRoom.sentences && currentRoom.sentences.length > 0
-    ? currentRoom.sentences.map((s: Sentence) => s.text).join(' ')
-    : '작성된 이야기가 없습니다.';
-
-  // 모둠원 목록
-  const studentList = currentRoom.studentOrder || [];
-
   return (
     <div className="app-container">
-      
-      {/* 헤더 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
+      {/* 상단 헤더 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '2px solid #ddd', paddingBottom: '15px' }}>
         <div>
-          <span style={{ fontSize: '0.9rem', color: '#666', background: '#ffe082', border: '1.5px solid #333', padding: '3px 10px', borderRadius: '20px', fontWeight: 'bold' }}>
-            모둠 이야기 완료 🎉
+          <span style={{ fontSize: '0.9rem', color: '#333', background: '#ffe082', border: '1.5px solid #333', padding: '3px 10px', borderRadius: '20px', fontWeight: 'bold' }}>
+            학급 모둠 릴레이 이야기 공유방 📚
           </span>
-          <h2 style={{ margin: '5px 0 0 0' }}>우리 모둠의 완성 이야기 & 동료 평가 🌟</h2>
+          <h2 style={{ margin: '5px 0 0 0' }}>다른 모둠의 이야기를 읽고 서로 동료 평가를 해보아요!</h2>
         </div>
-        <button className="btn btn-secondary" onClick={() => navigate('/')}>
-          <Home size={16} /> 처음으로
+        <button className="btn btn-secondary" onClick={() => navigate('/join')}>
+          <Home size={16} /> 로비로
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: '30px', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: '25px', flexWrap: 'wrap' }}>
         
-        {/* 왼쪽: 완성된 이야기 책 */}
-        <div className="card" style={{ flex: '2', minWidth: '350px', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-            <Award size={24} color="#ffb703" />
-            <h2>📖 완성작: "{currentRoom.title}"</h2>
-          </div>
+        {/* 왼쪽: 모둠별 이야기 갤러리 */}
+        <div style={{ flex: '2', minWidth: '350px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <h2>📖 우리 반 이야기 목록 ({projectRooms.length}개 모둠)</h2>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {projectRooms.map((room: Room) => {
+              const fullStory = room.sentences && room.sentences.length > 0
+                ? room.sentences.map((s: Sentence) => s.text).join(' ')
+                : '아직 작성된 이야기가 없습니다.';
+              
+              const isMyRoom = room.id === roomId;
+              const hasSubmittedThisRoom = submittedRoomIds[room.id];
 
-          <div 
-            className="note-container" 
-            style={{ 
-              flex: '1', 
-              fontSize: '1.35rem', 
-              lineHeight: '2.2', 
-              padding: '30px', 
-              minHeight: '250px',
-              fontFamily: 'var(--font-cute)',
-              backgroundImage: 'linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px)',
-              backgroundSize: '100% 2.2em'
-            }}
-          >
-            {fullStory}
-          </div>
+              return (
+                <div 
+                  key={room.id} 
+                  className="card" 
+                  style={{ 
+                    borderStyle: isMyRoom ? 'double' : 'solid', 
+                    borderWidth: isMyRoom ? '5px' : '3px',
+                    borderColor: isMyRoom ? 'var(--primary)' : '#333',
+                    textAlign: 'left'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ 
+                        fontSize: '0.85rem', 
+                        fontWeight: 'bold', 
+                        color: '#fff',
+                        background: room.status === 'completed' ? '#4caf50' : room.status === 'evaluating' ? '#ff9800' : '#2196f3',
+                        padding: '3px 8px',
+                        borderRadius: '10px'
+                      }}>
+                        {room.status === 'writing' && '📝 작성 중'}
+                        {room.status === 'evaluating' && '⭐ 평가 진행 중'}
+                        {room.status === 'completed' && '🏁 이야기 완성'}
+                      </span>
+                      <strong style={{ fontSize: '1.2rem' }}>{room.title} {isMyRoom && '(우리 모둠 🏠)'}</strong>
+                    </div>
 
-          <div style={{ background: '#f5f5f5', border: '1px solid #ddd', padding: '15px', borderRadius: '12px', marginTop: '20px', textAlign: 'left' }}>
-            <h3 style={{ fontSize: '1rem', margin: '0 0 8px 0', color: '#666' }}>✍️ 함께 쓴 작가 친구들:</h3>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              {studentList.map((name: string, idx: number) => (
-                <span key={name} style={{ background: '#fff', border: '1px solid #ccc', padding: '5px 12px', borderRadius: '20px', fontSize: '0.9rem', fontWeight: 'bold' }}>
-                  {idx + 1}. {name} {name === nickname && '(나)'}
-                </span>
-              ))}
-            </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      {isMyRoom ? (
+                        <span style={{ fontSize: '0.85rem', color: 'var(--primary)', fontWeight: 'bold' }}>우리 작품</span>
+                      ) : room.status === 'writing' ? (
+                        <span style={{ fontSize: '0.85rem', color: '#666' }}>작성 완료 대기 중</span>
+                      ) : (
+                        <button 
+                          className={`btn ${hasSubmittedThisRoom ? 'btn-secondary' : 'btn-primary'}`} 
+                          style={{ padding: '6px 12px', fontSize: '0.85rem', boxShadow: 'none' }}
+                          onClick={() => handleSelectRoomForEval(room)}
+                        >
+                          {hasSubmittedThisRoom ? '🔍 내 평가 보기' : '⭐ 동료 평가하기'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 이야기 본문 내용 */}
+                  <div style={{ 
+                    background: '#fffdf9', 
+                    border: '1.5px solid #eee', 
+                    padding: '15px 20px', 
+                    borderRadius: '12px', 
+                    fontSize: '1.1rem', 
+                    lineHeight: '1.7', 
+                    fontFamily: 'var(--font-cute)',
+                    color: room.status === 'writing' ? '#999' : '#333',
+                    fontStyle: room.status === 'writing' ? 'italic' : 'normal'
+                  }}>
+                    {room.status === 'writing' ? '✏️ 친구들이 이야기를 흥미롭게 쓰고 있는 중입니다. 조금만 기다려 주세요!' : fullStory}
+                  </div>
+
+                  {/* 작성 학생 태그 */}
+                  <div style={{ marginTop: '10px', fontSize: '0.85rem', color: '#666' }}>
+                    <strong>작가진:</strong> {room.studentOrder?.join(', ') || '대기 중'}
+                  </div>
+
+                  {/* 선생님 피드백 결과가 등록된 경우 (내 모둠이든 남 모둠이든 확인 가능) */}
+                  {room.teacherEvaluation && (
+                    <div style={{ marginTop: '15px', padding: '12px 15px', background: '#ffebee', border: '1px solid #ef9a9a', borderRadius: '10px', fontSize: '0.9rem' }}>
+                      <strong>👨‍🏫 선생님 피드백 의견:</strong> "{room.teacherEvaluation.comment || '참 잘했습니다!'}"
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        {/* 오른쪽: 루브릭 평가 및 교사 평가 결과 */}
+        {/* 오른쪽: 루브릭 평가 폼 입력 레이아웃 */}
         <div style={{ flex: '1', minWidth: '320px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
           
-          {/* 동료 평가 양식 */}
-          <div className="card" style={{ textAlign: 'left' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-              <Star size={22} color="#ffb703" />
-              <h2>{hasSubmitted ? '나의 동료 평가 완료' : '내 손으로 매기는 동료 평가'}</h2>
-            </div>
-
-            <form onSubmit={handleSubmit}>
-              {currentRoom.rubrics.map((rubric: Rubric) => (
-                <div key={rubric.id} className="rubric-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                  <span style={{ fontWeight: 'bold', fontSize: '1rem' }}>{rubric.name}</span>
-                  <div className="star-rating">
-                    {[1, 2, 3, 4, 5].map((num) => (
-                      <span
-                        key={num}
-                        className={(scores[rubric.id] || 0) >= num ? 'active' : ''}
-                        onClick={() => handleScoreChange(rubric.id, num)}
-                        style={{ cursor: hasSubmitted ? 'default' : 'pointer' }}
-                      >
-                        ★
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-
-              <div className="input-group" style={{ marginTop: '20px' }}>
-                <label className="input-label">📝 글을 읽고 느낀 점이나 친구들에게 한마디</label>
-                <textarea
-                  className="input-field"
-                  rows={3}
-                  placeholder="예: 다 같이 머리를 맞대고 쓰니까 스릴 넘치고 정말 재미있는 이야기가 만들어진 것 같아!"
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  disabled={hasSubmitted}
-                />
+          {selectedRoomIdForEval ? (
+            <div className="card" style={{ textAlign: 'left', position: 'sticky', top: '20px', borderStyle: 'solid', borderColor: 'var(--accent)' }}>
+              <button 
+                className="close-modal-btn" 
+                style={{ top: '10px', right: '15px' }}
+                onClick={() => setSelectedRoomIdForEval(null)}
+              >
+                ×
+              </button>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '15px' }}>
+                <Award size={20} color="var(--accent)" />
+                <h3 style={{ margin: 0 }}>
+                  [{projectRooms.find(r => r.id === selectedRoomIdForEval)?.title}] 평가하기
+                </h3>
               </div>
 
-              {!hasSubmitted ? (
-                <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
-                  평가 제출하기 🗳️
-                </button>
-              ) : (
-                <div style={{ background: '#e8f5e9', border: '2px solid #81c784', padding: '12px', borderRadius: '12px', textAlign: 'center', fontWeight: 'bold', color: '#2e7d32' }}>
-                  평가 작성이 안전하게 저장되었습니다! 👍
+              {submittedRoomIds[selectedRoomIdForEval] && (
+                <div style={{ background: '#e8f5e9', border: '1.5px solid #81c784', padding: '8px 12px', borderRadius: '8px', color: '#2e7d32', fontWeight: 'bold', fontSize: '0.85rem', marginBottom: '15px' }}>
+                  ✓ 이미 동료 평가 제출이 완료된 모둠입니다.
                 </div>
               )}
-            </form>
-          </div>
 
-          {/* 선생님의 한마디 (교사 평가 등록 완료 시 노출) */}
-          {currentRoom.teacherEvaluation && (
-            <div className="card" style={{ borderStyle: 'solid', borderColor: 'var(--accent)', background: '#fffbfa', textAlign: 'left' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
-                <div style={{ background: '#ffebee', padding: '6px', borderRadius: '50%', border: '2px solid var(--accent)' }}>
-                  <Award size={20} color="var(--accent)" />
-                </div>
-                <h2>👨‍🏫 선생님이 보낸 평가 결과</h2>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
+              <form onSubmit={handleSubmitEval}>
                 {currentRoom.rubrics.map((rubric: Rubric) => (
-                  <div key={rubric.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem' }}>
-                    <span>⭐ {rubric.name}</span>
-                    <strong>{currentRoom.teacherEvaluation?.scores[rubric.id]} / 5 점</strong>
+                  <div key={rubric.id} className="rubric-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <span style={{ fontWeight: 'bold', fontSize: '0.95rem' }}>{rubric.name}</span>
+                    <div className="star-rating" style={{ fontSize: '1.5rem', gap: '4px' }}>
+                      {[1, 2, 3, 4, 5].map((num) => (
+                        <span
+                          key={num}
+                          className={(scores[rubric.id] || 0) >= num ? 'active' : ''}
+                          onClick={() => handleScoreChange(rubric.id, num)}
+                          style={{ cursor: submittedRoomIds[selectedRoomIdForEval] ? 'default' : 'pointer' }}
+                        >
+                          ★
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 ))}
-              </div>
-              
-              <div style={{ borderTop: '1px dashed #ffcdd2', paddingTop: '10px' }}>
-                <strong>선생님의 종합 평가 의견:</strong>
-                <p style={{ marginTop: '5px', fontStyle: 'italic', fontSize: '1.02rem', lineHeight: '1.5', color: '#555' }}>
-                  "{currentRoom.teacherEvaluation.comment || '참 잘했습니다!'}"
-                </p>
-              </div>
+
+                <div className="input-group" style={{ marginTop: '15px' }}>
+                  <label className="input-label" style={{ fontSize: '0.95rem' }}>💬 이 모둠 글에 남기는 응원의 한마디</label>
+                  <textarea
+                    className="input-field"
+                    rows={3}
+                    placeholder="친구들의 소설을 읽고 재미있었던 점이나 느낀 점을 칭찬해 주세요!"
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                    disabled={submittedRoomIds[selectedRoomIdForEval]}
+                  />
+                </div>
+
+                {!submittedRoomIds[selectedRoomIdForEval] ? (
+                  <button type="submit" className="btn btn-accent" style={{ width: '100%', justifyContent: 'center' }}>
+                    평가 제출하기 🗳️
+                  </button>
+                ) : (
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary" 
+                    style={{ width: '100%', justifyContent: 'center', boxShadow: 'none' }}
+                    onClick={() => setSelectedRoomIdForEval(null)}
+                  >
+                    확인 완료
+                  </button>
+                )}
+              </form>
+            </div>
+          ) : (
+            <div className="card" style={{ textAlign: 'center', padding: '40px 20px', color: '#999', borderStyle: 'dashed', position: 'sticky', top: '20px' }}>
+              <MessageSquare size={36} style={{ color: '#ccc', marginBottom: '10px' }} />
+              <h3>동료 평가를 시작해 보세요</h3>
+              <p style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
+                왼쪽 목록에서 아직 완료되지 않았거나 완료된 다른 모둠의 **[⭐ 동료 평가하기]** 버튼을 클릭하면 평가 양식이 이곳에 나타납니다.
+              </p>
             </div>
           )}
+
+          {/* 우리 모둠에 친구들이 써준 동료 평가 현황 피드백 (우리 모둠방에 달린 평가 확인) */}
+          <div className="card" style={{ textAlign: 'left', background: '#f9f9f9' }}>
+            <h3 style={{ borderBottom: '2px dashed #ddd', paddingBottom: '8px', marginBottom: '12px' }}>
+              💬 친구들이 우리 모둠에 남긴 한마디
+            </h3>
+            
+            {(() => {
+              // evaluations 노드에서 내 방(roomId)에 들어온 모든 평가 목록 조회
+              const myRoomEvals = currentRoom.evaluations?.[currentRoom.id] || [];
+              if (myRoomEvals.length === 0) {
+                return (
+                  <p style={{ color: '#999', fontSize: '0.9rem', textAlign: 'center', padding: '20px 0' }}>
+                    아직 친구들이 남긴 피드백이 없습니다. 다른 방 친구들이 별점을 남기면 이곳에 표시됩니다! ⏳
+                  </p>
+                );
+              }
+              
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto' }}>
+                  {myRoomEvals.map((ev: Evaluation) => {
+                    if (!ev.comment?.trim()) return null;
+                    return (
+                      <div key={ev.evaluatorNickname} style={{ background: '#fff', border: '1px solid #eee', padding: '10px 12px', borderRadius: '10px' }}>
+                        <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: 'var(--primary-hover)', display: 'block', marginBottom: '3px' }}>
+                          ✍️ {ev.evaluatorNickname} 친구의 의견:
+                        </span>
+                        <p style={{ margin: 0, fontSize: '0.95rem', color: '#333' }}>
+                          "{ev.comment}"
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
 
         </div>
 
