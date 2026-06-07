@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { db } from '../firebase';
+import { db, firebaseDiagnostics } from '../firebase';
 import { ref, set as dbSet, update as dbUpdate, onValue, off, get as dbGet, remove as dbRemove, runTransaction } from 'firebase/database';
 import type { DatabaseReference } from 'firebase/database';
 import type { Room, RoomStatus, LayoutMode, Sentence, Student, Rubric, Project, WarningLog, Evaluation } from '../types/game';
@@ -94,6 +94,10 @@ function normalizeRoom(roomData: Room): Room {
   };
 }
 
+function missingRoomMessage(roomId: string): string {
+  return `방을 찾을 수 없습니다. 입력한 코드: ${roomId} / 연결 DB: ${firebaseDiagnostics.databaseURL} / 프로젝트: ${firebaseDiagnostics.projectId}`;
+}
+
 export const useGameStore = create<GameState>((set, get) => ({
   currentRoom: null,
   projects: [],
@@ -163,13 +167,13 @@ export const useGameStore = create<GameState>((set, get) => ({
       const existingSnapshot = await dbGet(roomRef);
 
       if (!existingSnapshot.exists()) {
-        set({ error: '방을 찾을 수 없습니다.', loading: false });
+        set({ error: missingRoomMessage(formattedRoomId), loading: false });
         return false;
       }
 
       const result = await runTransaction(roomRef, (currentData: Room | null) => {
         if (!currentData) {
-          failureMessage = '방을 찾을 수 없습니다.';
+          failureMessage = missingRoomMessage(formattedRoomId);
           return;
         }
 

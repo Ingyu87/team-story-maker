@@ -28,3 +28,7 @@ if (appCheckSiteKey) {
 // Initialize Realtime Database and Auth
 export const db = getDatabase(app);
 export const auth = getAuth(app);
+export const firebaseDiagnostics = {
+  databaseURL: firebaseConfig.databaseURL || '(missing database URL)',
+  projectId: firebaseConfig.projectId || '(missing project ID)',
+};
