@@ -785,6 +785,10 @@ export const useGameStore = create<GameState>((set, get) => ({
         students: null,
         studentOrder: null,
         typingStatus: null,
+        sentences: null,
+        evaluations: null,
+        teacherEvaluation: null,
+        warningLogs: null,
         currentTurnIndex: 0,
         status: 'waiting'
       });
