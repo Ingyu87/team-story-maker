@@ -37,6 +37,12 @@ export const useAuthStore = create<AuthState>((set) => ({
         errorMessage = '비밀번호는 최소 6자 이상이어야 합니다.';
       } else if (err.code === 'auth/invalid-email') {
         errorMessage = '유효하지 않은 이메일 주소 형식입니다.';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        errorMessage = '파이어베이스 콘솔에서 이메일/비밀번호 로그인이 활성화되지 않았습니다. [저장] 버튼을 누르셨는지 확인해 주세요!';
+      } else if (err.code === 'auth/invalid-api-key') {
+        errorMessage = '파이어베이스 API Key 환경 변수가 올바르지 않습니다.';
+      } else {
+        errorMessage = `회원가입 실패: ${err.message || err.code}`;
       }
       set({ error: errorMessage, loading: false });
       throw new Error(errorMessage);
@@ -52,6 +58,10 @@ export const useAuthStore = create<AuthState>((set) => ({
       let errorMessage = '로그인에 실패했습니다.';
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         errorMessage = '이메일 또는 비밀번호가 잘못되었습니다.';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        errorMessage = '파이어베이스 콘솔에서 이메일/비밀번호 로그인이 활성화되지 않았습니다. [저장] 버튼을 누르셨는지 확인해 주세요!';
+      } else {
+        errorMessage = `로그인 실패: ${err.message || err.code}`;
       }
       set({ error: errorMessage, loading: false });
       throw new Error(errorMessage);
