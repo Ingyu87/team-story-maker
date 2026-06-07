@@ -10,15 +10,19 @@ function sendJson(response, statusCode, body) {
 
 async function readRequestBody(request) {
   if (!request.body) return {};
+  if (Buffer.isBuffer(request.body)) {
+    const rawBufferBody = request.body.toString('utf8').replace(/^\uFEFF/, '');
+    return rawBufferBody ? JSON.parse(rawBufferBody) : {};
+  }
   if (typeof request.body === 'object') return request.body;
-  if (typeof request.body === 'string') return JSON.parse(request.body);
+  if (typeof request.body === 'string') return JSON.parse(request.body.replace(/^\uFEFF/, ''));
 
   const chunks = [];
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
-  const rawBody = Buffer.concat(chunks).toString('utf8');
+  const rawBody = Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '');
   return rawBody ? JSON.parse(rawBody) : {};
 }
 
