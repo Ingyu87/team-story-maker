@@ -233,8 +233,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         const updatedOrder = (roomData.studentOrder || []).filter(name => name !== nickname);
 
         await dbUpdate(roomRef, {
-          students: updatedStudents,
-          studentOrder: updatedOrder,
+          students: Object.keys(updatedStudents).length > 0 ? updatedStudents : null,
+          studentOrder: updatedOrder.length > 0 ? updatedOrder : null,
         });
       } else {
         if (roomData.students && roomData.students[nickname]) {
@@ -273,9 +273,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
 
       await dbUpdate(roomRef, {
-        students: updatedStudents,
-        studentOrder: updatedOrder,
-        typingStatus: updatedTypingStatus,
+        students: Object.keys(updatedStudents).length > 0 ? updatedStudents : null,
+        studentOrder: updatedOrder.length > 0 ? updatedOrder : null,
+        typingStatus: Object.keys(updatedTypingStatus).length > 0 ? updatedTypingStatus : null,
         currentTurnIndex: nextTurnIndex,
         status: updatedOrder.length === 0 && room.status === 'writing' ? 'waiting' : room.status,
       });
@@ -782,8 +782,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     const formattedRoomId = roomId.toUpperCase();
     try {
       await dbUpdate(ref(db, `rooms/${formattedRoomId}`), {
-        students: {},
-        studentOrder: [],
+        students: null,
+        studentOrder: null,
+        typingStatus: null,
         currentTurnIndex: 0,
         status: 'waiting'
       });
@@ -796,13 +797,13 @@ export const useGameStore = create<GameState>((set, get) => ({
     const formattedRoomId = roomId.toUpperCase();
     try {
       await dbUpdate(ref(db, `rooms/${formattedRoomId}`), {
-        sentences: [],
+        sentences: null,
         currentTurnIndex: 0,
         status: 'waiting',
-        typingStatus: {},
-        evaluations: {},
+        typingStatus: null,
+        evaluations: null,
         teacherEvaluation: null,
-        warningLogs: []
+        warningLogs: null
       });
     } catch (err) {
       console.error('Failed to reset activity:', err);
