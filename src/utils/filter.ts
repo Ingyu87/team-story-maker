@@ -4,6 +4,8 @@ export interface FilterResult {
   suggestedText?: string; // 대안 텍스트 추천 (선택 사항)
 }
 
+const ENABLE_GEMINI_FILTER = false;
+
 async function requestGemini(task: 'filter' | 'analysis', prompt: string, jsonMode = false): Promise<string> {
   const response = await fetch('/api/gemini', {
     method: 'POST',
@@ -92,13 +94,17 @@ function localFilterCheck(text: string): FilterResult | null {
 }
 
 /**
- * Gemini API와 로컬 필터를 결합하여 문장을 실시간 검사합니다.
+ * 현재는 로컬 필터만 사용합니다. Gemini API 비용/키가 준비되면 ENABLE_GEMINI_FILTER를 true로 바꾸면 됩니다.
  */
 export async function filterSentence(text: string): Promise<FilterResult> {
   // 1. 로컬 필터 즉시 검사 (최우선순위)
   const localResult = localFilterCheck(text);
   if (localResult) {
     return localResult;
+  }
+
+  if (!ENABLE_GEMINI_FILTER) {
+    return { isSafe: true };
   }
 
   try {

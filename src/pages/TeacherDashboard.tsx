@@ -250,29 +250,8 @@ export const TeacherDashboard: React.FC = () => {
     }
   };
 
-  // AI 모둠 활동 분석
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // AI 모둠 활동 분석 결과 모달은 API 재활성화 시 다시 사용합니다.
   const [aiReport, setAiReport] = useState<string | null>(null);
-
-  const handleRunAIAnalysis = async () => {
-    if (!currentRoom) return;
-    setIsAnalyzing(true);
-    setAiReport(null);
-    try {
-      const { analyzeStoryAI } = await import('../utils/filter');
-      const studentsListStr = Object.keys(currentRoom.students || {});
-      const report = await analyzeStoryAI(
-        currentRoom.sentences || [],
-        studentsListStr,
-        currentRoom.warningLogs || []
-      );
-      setAiReport(report);
-    } catch (err: unknown) {
-      alert(getErrorMessage(err, 'AI 분석 중 오류가 발생했습니다.'));
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
 
   // 마크다운 파서 및 렌더러
   const renderMarkdown = (md: string) => {
@@ -504,12 +483,12 @@ export const TeacherDashboard: React.FC = () => {
 
                   {/* AI 활동 분석 버튼 배치 */}
                   <button 
-                    className={`btn btn-primary ${(!currentRoom.sentences || currentRoom.sentences.length === 0) ? 'btn-disabled' : ''}`}
-                    style={{ width: '100%', justifyContent: 'center', background: '#673ab7', marginTop: '10px' }}
-                    onClick={handleRunAIAnalysis}
-                    disabled={!currentRoom.sentences || currentRoom.sentences.length === 0}
+                    className="btn btn-primary btn-disabled"
+                    style={{ width: '100%', justifyContent: 'center', background: '#9e9e9e', marginTop: '10px' }}
+                    disabled
+                    title="Gemini API 연결 후 다시 활성화할 예정입니다."
                   >
-                    🤖 AI 모둠 활동 분석
+                    🤖 AI 모둠 활동 분석 (추후 업데이트)
                   </button>
                 </div>
               )}
@@ -1385,21 +1364,6 @@ export const TeacherDashboard: React.FC = () => {
           </div>
         </div>
       )}
-      {/* AI 분석 진행 중 모달 */}
-      {isAnalyzing && (
-        <div className="modal-overlay">
-          <div className="modal-content" style={{ maxWidth: '450px' }}>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', margin: '20px 0' }}>
-              <div className="typing-dot" style={{ width: '12px', height: '12px', background: '#673ab7' }} />
-              <div className="typing-dot" style={{ width: '12px', height: '12px', background: '#673ab7', animationDelay: '0.2s' }} />
-              <div className="typing-dot" style={{ width: '12px', height: '12px', background: '#673ab7', animationDelay: '0.4s' }} />
-            </div>
-            <h2 style={{ marginTop: '10px' }}>Gemini가 모둠 활동을 분석하고 있습니다...</h2>
-            <p style={{ color: '#666' }}>학생들의 협동성, 창의성, 언어 습관을 분석하여 보고서를 작성하고 있어요. 잠시만 기다려 주세요! 🧠</p>
-          </div>
-        </div>
-      )}
-
       {/* AI 분석 결과 보고서 모달 */}
       {aiReport && (
         <div className="modal-overlay" onClick={() => setAiReport(null)}>
