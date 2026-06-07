@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { db } from '../firebase';
 import { ref, set as dbSet, update as dbUpdate, onValue, off, get as dbGet, remove as dbRemove } from 'firebase/database';
 import type { DatabaseReference } from 'firebase/database';
-import type { Room, RoomStatus, LayoutMode, Sentence, Student, Rubric, Project } from '../types/game';
+import type { Room, RoomStatus, LayoutMode, Sentence, Student, Rubric, Project, WarningLog } from '../types/game';
 
 interface GameState {
   currentRoom: Room | null;
@@ -22,6 +22,7 @@ interface GameState {
     rubrics: Rubric[];
     teacherId: string;
     projectId: string;
+    turnMode: 'random' | 'sequence' | 'free';
   }) => Promise<string>;
   
   joinRoom: (roomId: string, nickname: string) => Promise<boolean>;
@@ -43,6 +44,25 @@ interface GameState {
   createProject: (teacherId: string, name: string, description?: string) => Promise<void>;
   deleteProject: (teacherId: string, projectId: string) => Promise<void>;
   loadRoomsByProject: (teacherId: string, projectId: string) => Promise<void>;
+  
+  // Real-time operations
+  logWarning: (roomId: string, nickname: string, text: string, reason: string) => Promise<void>;
+  updateStudentOrder: (roomId: string, studentOrder: string[]) => Promise<void>;
+  updateProjectRoomsConfig: (
+    teacherId: string,
+    projectId: string,
+    config: {
+      maxStudents: number;
+      layoutMode: LayoutMode;
+      endCondition: 'limit' | 'free';
+      sentenceLimit: number;
+      rubrics: Rubric[];
+      turnMode: 'random' | 'sequence' | 'free';
+    }
+  ) => Promise<void>;
+  subscribeRoomsByProject: (teacherId: string, projectId: string) => (() => void);
+  resetStudents: (roomId: string) => Promise<void>;
+  resetActivity: (roomId: string) => Promise<void>;
 }
 
 function generateRoomId(): string {
@@ -95,6 +115,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         evaluations: {},
         teacherId: config.teacherId,
         projectId: config.projectId,
+        turnMode: config.turnMode,
       };
 
       // 1. 최상위 방 생성
@@ -212,11 +233,12 @@ export const useGameStore = create<GameState>((set, get) => ({
         throw new Error('접속한 학생이 없어 시작할 수 없습니다.');
       }
 
-      const shuffledOrder = [...order].sort(() => Math.random() - 0.5);
+      const turnMode = roomData.turnMode || 'random';
+      const finalOrder = turnMode === 'random' ? [...order].sort(() => Math.random() - 0.5) : [...order];
 
       await dbUpdate(roomRef, {
         status: 'writing',
-        studentOrder: shuffledOrder,
+        studentOrder: finalOrder,
         currentTurnIndex: 0,
       });
     } catch (err: any) {
@@ -488,6 +510,168 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     } catch (err: any) {
       set({ error: err.message || '방 목록 로드 실패.', loading: false });
+    }
+  },
+
+  logWarning: async (roomId, nickname, text, reason) => {
+    const formattedRoomId = roomId.toUpperCase();
+    try {
+      const roomRef = ref(db, `rooms/${formattedRoomId}`);
+      const snapshot = await dbGet(roomRef);
+      if (!snapshot.exists()) return;
+
+      const room = snapshot.val() as Room;
+      const warningLogs = room.warningLogs || [];
+      const newWarning: WarningLog = {
+        id: `w-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        nickname,
+        text,
+        reason,
+        timestamp: Date.now()
+      };
+      const updatedLogs = [...warningLogs, newWarning];
+      await dbUpdate(roomRef, {
+        warningLogs: updatedLogs
+      });
+    } catch (err) {
+      console.error('Warning logging failed:', err);
+    }
+  },
+
+  updateStudentOrder: async (roomId, studentOrder) => {
+    const formattedRoomId = roomId.toUpperCase();
+    try {
+      await dbUpdate(ref(db, `rooms/${formattedRoomId}`), {
+        studentOrder
+      });
+    } catch (err) {
+      console.error('Failed to update student order:', err);
+    }
+  },
+
+  updateProjectRoomsConfig: async (teacherId, projectId, config) => {
+    set({ loading: true, error: null });
+    try {
+      const mappingRef = ref(db, `teachers/${teacherId}/projects/${projectId}/roomIds`);
+      const snapshot = await dbGet(mappingRef);
+      if (snapshot.exists()) {
+        const roomIds = Object.keys(snapshot.val());
+        for (const rId of roomIds) {
+          const roomRef = ref(db, `rooms/${rId}`);
+          await dbUpdate(roomRef, {
+            maxStudents: config.maxStudents,
+            layoutMode: config.layoutMode,
+            endCondition: config.endCondition,
+            sentenceLimit: config.sentenceLimit,
+            rubrics: config.rubrics,
+            turnMode: config.turnMode
+          });
+        }
+      }
+      set({ loading: false });
+    } catch (err: any) {
+      set({ error: err.message || '설정 수정에 실패했습니다.', loading: false });
+      throw err;
+    }
+  },
+
+  subscribeRoomsByProject: (teacherId, projectId) => {
+    const mappingRef = ref(db, `teachers/${teacherId}/projects/${projectId}/roomIds`);
+    
+    // To track individual room listener cleanups
+    const roomCleanups: { [roomId: string]: () => void } = {};
+    let roomDataMap: { [roomId: string]: Room } = {};
+    
+    const updateProjectRooms = () => {
+      const roomsList = Object.values(roomDataMap).sort((a, b) => b.createdAt - a.createdAt);
+      set({ projectRooms: roomsList });
+    };
+
+    const unsubscribeMapping = onValue(mappingRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        Object.keys(roomCleanups).forEach((rId) => {
+          roomCleanups[rId]();
+          delete roomCleanups[rId];
+        });
+        roomDataMap = {};
+        set({ projectRooms: [], loading: false });
+        return;
+      }
+
+      const roomIdsMap = snapshot.val();
+      const roomIds = Object.keys(roomIdsMap);
+
+      // Remove listeners for rooms no longer in the project
+      Object.keys(roomCleanups).forEach((rId) => {
+        if (!roomIds.includes(rId)) {
+          roomCleanups[rId]();
+          delete roomCleanups[rId];
+          delete roomDataMap[rId];
+        }
+      });
+
+      // Add listeners for new rooms
+      roomIds.forEach((rId) => {
+        if (!roomCleanups[rId]) {
+          const roomRef = ref(db, `rooms/${rId}`);
+          const unsubscribeRoom = onValue(roomRef, (roomSnap) => {
+            if (roomSnap.exists()) {
+              const rData = roomSnap.val() as Room;
+              if (!rData.sentences) rData.sentences = [];
+              if (!rData.studentOrder) rData.studentOrder = [];
+              if (!rData.students) rData.students = {};
+              if (!rData.warningLogs) rData.warningLogs = [];
+              roomDataMap[rId] = rData;
+            } else {
+              delete roomDataMap[rId];
+            }
+            updateProjectRooms();
+          }, (err) => {
+            console.error(`Error loading room ${rId}:`, err);
+          });
+          roomCleanups[rId] = unsubscribeRoom;
+        }
+      });
+    }, (err) => {
+      set({ error: err.message });
+    });
+
+    return () => {
+      unsubscribeMapping();
+      Object.keys(roomCleanups).forEach((rId) => {
+        roomCleanups[rId]();
+      });
+    };
+  },
+
+  resetStudents: async (roomId) => {
+    const formattedRoomId = roomId.toUpperCase();
+    try {
+      await dbUpdate(ref(db, `rooms/${formattedRoomId}`), {
+        students: {},
+        studentOrder: [],
+        currentTurnIndex: 0,
+        status: 'waiting'
+      });
+    } catch (err) {
+      console.error('Failed to reset students:', err);
+    }
+  },
+
+  resetActivity: async (roomId) => {
+    const formattedRoomId = roomId.toUpperCase();
+    try {
+      await dbUpdate(ref(db, `rooms/${formattedRoomId}`), {
+        sentences: [],
+        currentTurnIndex: 0,
+        status: 'waiting',
+        typingStatus: {},
+        evaluations: {},
+        teacherEvaluation: null,
+        warningLogs: []
+      });
+    } catch (err) {
+      console.error('Failed to reset activity:', err);
     }
   },
 }));

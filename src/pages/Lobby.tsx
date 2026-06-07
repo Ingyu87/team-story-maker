@@ -11,11 +11,20 @@ export const Lobby: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState('');
   const { joinRoom, loading, error, setError } = useGameStore();
 
-  // URL 쿼리 파라미터로 공유받은 방 코드가 있다면 자동 입력
+  // URL 쿼리 파라미터 또는 로컬 스토리지에서 이전 입력 정보 가져와서 자동 설정
   useEffect(() => {
     const codeParam = searchParams.get('code');
     if (codeParam) {
       setRoomId(codeParam.toUpperCase());
+    } else {
+      const savedRoomId = localStorage.getItem('relay-story-last-roomId');
+      if (savedRoomId) {
+        setRoomId(savedRoomId.toUpperCase());
+      }
+    }
+    const savedNickname = localStorage.getItem('relay-story-last-nickname');
+    if (savedNickname) {
+      setNickname(savedNickname);
     }
   }, [searchParams]);
 
@@ -37,6 +46,9 @@ export const Lobby: React.FC = () => {
 
     const success = await joinRoom(roomId.trim(), nickname.trim());
     if (success) {
+      // 입장 성공 시 입력정보 저장
+      localStorage.setItem('relay-story-last-roomId', roomId.trim());
+      localStorage.setItem('relay-story-last-nickname', nickname.trim());
       navigate(`/student/${roomId.trim()}/${nickname.trim()}`);
     } else {
       setErrorMsg(error || '방 입장 신청에 실패했습니다.');

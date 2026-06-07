@@ -54,6 +54,16 @@ export interface Room {
   };
   teacherId?: string; // 방을 개설한 교사 UID
   projectId?: string; // 소속된 프로젝트 폴더 ID
+  warningLogs?: WarningLog[]; // AI 필터링에 걸린 경고 기록들
+  turnMode?: 'random' | 'sequence' | 'free'; // 글쓰기 순서 방식
+}
+
+export interface WarningLog {
+  id: string;
+  nickname: string;
+  text: string;
+  reason: string;
+  timestamp: number;
 }
 
 export interface Project {
@@ -62,4 +72,5 @@ export interface Project {
   description?: string;
   createdAt: number;
 }
+
 

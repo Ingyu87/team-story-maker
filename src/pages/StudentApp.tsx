@@ -46,6 +46,7 @@ export const StudentApp: React.FC = () => {
 
       return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
+        leaveRoom(roomId, nickname);
         unsubscribeRoom(roomId);
       };
     }
@@ -101,6 +102,13 @@ export const StudentApp: React.FC = () => {
     if (!filterResult.isSafe) {
       // 비속어 또는 단순도배 검출 시 전송 차단 및 경고 팝업 활성화
       setFilterAlert(filterResult);
+      // Firebase에 경고 기록 저장
+      await useGameStore.getState().logWarning(
+        roomId, 
+        nickname, 
+        inputText.trim(), 
+        filterResult.reason || '부적절한 단어 사용 또는 의미 없는 나열'
+      );
       return;
     }
 
@@ -133,7 +141,7 @@ export const StudentApp: React.FC = () => {
 
   const order = currentRoom.studentOrder || [];
   const currentTurnPlayer = order[currentRoom.currentTurnIndex];
-  const isMyTurn = currentTurnPlayer === nickname;
+  const isMyTurn = currentRoom.turnMode === 'free' || currentTurnPlayer === nickname;
 
   // 모둠원 목록
   const studentsList = currentRoom.students ? Object.values(currentRoom.students) : [];
@@ -162,7 +170,9 @@ export const StudentApp: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <PenTool size={20} />
             <div>
-              {isMyTurn ? (
+              {currentRoom.turnMode === 'free' ? (
+                <strong>🎉 자유 글쓰기 시간이에요! 모둠원들과 조율하며 원하는 문장을 적어 보세요.</strong>
+              ) : isMyTurn ? (
                 <strong>🎉 야호! 지금은 내 차례예요! 멋진 문장을 한 개 써 주세요.</strong>
               ) : (
                 <span>
@@ -171,7 +181,7 @@ export const StudentApp: React.FC = () => {
               )}
             </div>
           </div>
-          {isMyTurn && currentRoom.endCondition === 'free' && (
+          {(currentRoom.turnMode === 'free' || (isMyTurn && currentRoom.endCondition === 'free')) && (
             <button className="btn btn-accent" onClick={handleCompleteStory} style={{ padding: '8px 16px', fontSize: '0.95rem' }}>
               이야기 완성하기 🏁
             </button>

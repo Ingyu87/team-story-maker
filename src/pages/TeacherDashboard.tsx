@@ -41,7 +41,10 @@ export const TeacherDashboard: React.FC = () => {
     loadProjects,
     createProject,
     deleteProject,
-    loadRoomsByProject
+    loadRoomsByProject,
+    updateStudentOrder,
+    updateProjectRoomsConfig,
+    subscribeRoomsByProject
   } = useGameStore();
 
   // Navigation / Selection State
@@ -53,13 +56,15 @@ export const TeacherDashboard: React.FC = () => {
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDesc, setNewProjectDesc] = useState('');
   const [showCreateRoomForm, setShowCreateRoomForm] = useState(false);
+  const [showEditRoomForm, setShowEditRoomForm] = useState(false);
 
-  // 방 생성 Form State
+  // 방 생성 및 수정 Form State
   const [groupCount, setGroupCount] = useState(4);
   const [maxStudents, setMaxStudents] = useState(4);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('chat');
   const [endCondition, setEndCondition] = useState<'limit' | 'free'>('limit');
   const [sentenceLimit, setSentenceLimit] = useState(10);
+  const [turnMode, setTurnMode] = useState<'random' | 'sequence' | 'free'>('random');
   const [rubrics, setRubrics] = useState<Rubric[]>([
     { id: 'r1', name: '창의성 (재미있는 상상력)', maxScore: 5 },
     { id: 'r2', name: '협동성 (앞 문장과 이어지는 내용)', maxScore: 5 },
@@ -74,6 +79,10 @@ export const TeacherDashboard: React.FC = () => {
   // 아카이브 뷰어 상태
   const [viewingArchiveRoom, setViewingArchiveRoom] = useState<Room | null>(null);
 
+  // 로컬 방별 아코디언 펼침 상태
+  const [expandedStoryRoomIds, setExpandedStoryRoomIds] = useState<{ [roomId: string]: boolean }>({});
+  const [expandedWarningRoomIds, setExpandedWarningRoomIds] = useState<{ [roomId: string]: boolean }>({});
+
   // 1. Auth 세션 감지
   useEffect(() => {
     const unsubscribe = initializeAuth();
@@ -87,12 +96,13 @@ export const TeacherDashboard: React.FC = () => {
     }
   }, [user]);
 
-  // 3. 프로젝트 선택 시 해당 프로젝트의 방 목록 로드
+  // 3. 프로젝트 선택 시 해당 프로젝트의 방 목록 실시간 구독
   useEffect(() => {
     if (user && selectedProjectId) {
-      loadRoomsByProject(user.uid, selectedProjectId);
+      const unsubscribe = subscribeRoomsByProject(user.uid, selectedProjectId);
+      return () => unsubscribe();
     }
-  }, [selectedProjectId, currentRoom?.status]); // 방 상태 변경 시 리로드
+  }, [selectedProjectId]);
 
   // 4. 이야기방 실시간 구독 동기화
   useEffect(() => {
@@ -160,6 +170,7 @@ export const TeacherDashboard: React.FC = () => {
           rubrics,
           teacherId: user.uid,
           projectId: selectedProjectId,
+          turnMode: turnMode || 'random',
         });
       }
       setShowCreateRoomForm(false);
@@ -192,9 +203,106 @@ export const TeacherDashboard: React.FC = () => {
     await submitTeacherEvaluation(activeRoomId, evalScores, evalComment);
     await completeRoom(activeRoomId);
     alert('모둠 평가가 완료되었습니다!');
-    
-    // 리스트 리로드
-    await loadRoomsByProject(user.uid, selectedProjectId);
+  };
+
+  // 모든 모둠 설정 일괄 업데이트
+  const handleUpdateRoomsConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !selectedProjectId) return;
+
+    try {
+      await updateProjectRoomsConfig(user.uid, selectedProjectId, {
+        maxStudents,
+        layoutMode,
+        endCondition,
+        sentenceLimit,
+        rubrics,
+        turnMode
+      });
+      setShowEditRoomForm(false);
+      alert('이야기방 설정이 성공적으로 일괄 수정되었습니다! ⚙️');
+    } catch (err: any) {
+      alert(err.message || '설정 수정에 실패했습니다.');
+    }
+  };
+
+  // 학생 순서 바꾸기 (지정 순서 모드 시)
+  const moveStudentOrder = async (index: number, direction: 'up' | 'down') => {
+    if (!activeRoomId || !currentRoom) return;
+    const order = [...(currentRoom.studentOrder || [])];
+    const targetIdx = direction === 'up' ? index - 1 : index + 1;
+    if (targetIdx < 0 || targetIdx >= order.length) return;
+
+    const temp = order[index];
+    order[index] = order[targetIdx];
+    order[targetIdx] = temp;
+
+    await updateStudentOrder(activeRoomId, order);
+  };
+
+  // AI 모둠 활동 분석
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiReport, setAiReport] = useState<string | null>(null);
+
+  const handleRunAIAnalysis = async () => {
+    if (!currentRoom) return;
+    setIsAnalyzing(true);
+    setAiReport(null);
+    try {
+      const { analyzeStoryAI } = await import('../utils/filter');
+      const studentsListStr = Object.keys(currentRoom.students || {});
+      const report = await analyzeStoryAI(
+        currentRoom.sentences || [],
+        studentsListStr,
+        currentRoom.warningLogs || []
+      );
+      setAiReport(report);
+    } catch (err: any) {
+      alert(err.message || 'AI 분석 중 오류가 발생했습니다.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // 마크다운 파서 및 렌더러
+  const renderMarkdown = (md: string) => {
+    const lines = md.split('\n');
+    return lines.map((line, idx) => {
+      if (line.trim().startsWith('###')) {
+        return <h3 key={idx} style={{ margin: '15px 0 8px 0', fontSize: '1.25rem', color: '#111', borderBottom: '1.5px solid #eee', paddingBottom: '4px' }}>{line.replace(/^###\s*/, '')}</h3>;
+      }
+      if (line.trim().startsWith('####')) {
+        return <h4 key={idx} style={{ margin: '12px 0 6px 0', fontSize: '1.1rem', color: '#444' }}>{line.replace(/^####\s*/, '')}</h4>;
+      }
+      if (line.trim().startsWith('##')) {
+        return <h2 key={idx} style={{ margin: '20px 0 10px 0', fontSize: '1.5rem', color: '#000', borderBottom: '2px solid #333', paddingBottom: '6px' }}>{line.replace(/^##\s*/, '')}</h2>;
+      }
+      if (line.trim().startsWith('>')) {
+        return (
+          <blockquote key={idx} style={{ borderLeft: '4px solid #b39ddb', margin: '10px 0', paddingLeft: '15px', color: '#555', fontStyle: 'italic', background: '#f3e5f5', padding: '10px 14px', borderRadius: '8px' }}>
+            {line.replace(/^>\s*/, '')}
+          </blockquote>
+        );
+      }
+      if (line.trim().startsWith('-') || line.trim().startsWith('*')) {
+        const text = line.replace(/^[-*]\s*/, '');
+        return <li key={idx} style={{ marginLeft: '20px', marginBottom: '6px', fontSize: '1.05rem', textAlign: 'left' }}>{parseInlineMarkdown(text)}</li>;
+      }
+      if (!line.trim()) {
+        return <div key={idx} style={{ height: '8px' }} />;
+      }
+      return <p key={idx} style={{ margin: '6px 0', fontSize: '1.05rem', textAlign: 'left' }}>{parseInlineMarkdown(line)}</p>;
+    });
+  };
+
+  const parseInlineMarkdown = (text: string) => {
+    const parts = text.split(/\*\*([\s\S]+?)\*\*/g);
+    return parts.map((part, i) => {
+      if (i % 2 === 1) {
+        return <strong key={i} style={{ color: '#673ab7' }}>{part}</strong>;
+      }
+      return part;
+    });
   };
 
   // 로딩 분기
@@ -291,14 +399,48 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               ) : (
                 <div>
-                  <div className="student-grid" style={{ marginBottom: '20px' }}>
-                    {joinedStudents.map((st) => (
-                      <div key={st.nickname} className="student-tag">
-                        <span className={st.isOnline ? 'student-online-dot' : 'student-offline-dot'} />
-                        {st.nickname}
-                      </div>
-                    ))}
-                  </div>
+                  {currentRoom.turnMode === 'sequence' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+                      {joinedStudents.map((st, idx) => (
+                        <div key={st.nickname} className="student-tag" style={{ justifyContent: 'space-between', padding: '10px 16px', display: 'flex', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontStyle: 'italic', color: '#999', fontSize: '0.85rem' }}>{idx + 1}.</span>
+                            <span className={st.isOnline ? 'student-online-dot' : 'student-offline-dot'} />
+                            <strong>{st.nickname}</strong>
+                          </div>
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button 
+                              type="button" 
+                              className="btn btn-secondary" 
+                              style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none', border: '1.5px solid #333' }}
+                              disabled={idx === 0}
+                              onClick={() => moveStudentOrder(idx, 'up')}
+                            >
+                              ▲
+                            </button>
+                            <button 
+                              type="button" 
+                              className="btn btn-secondary" 
+                              style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none', border: '1.5px solid #333' }}
+                              disabled={idx === joinedStudents.length - 1}
+                              onClick={() => moveStudentOrder(idx, 'down')}
+                            >
+                              ▼
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="student-grid" style={{ marginBottom: '20px' }}>
+                      {joinedStudents.map((st) => (
+                        <div key={st.nickname} className="student-tag">
+                          <span className={st.isOnline ? 'student-online-dot' : 'student-offline-dot'} />
+                          {st.nickname}
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   {currentRoom.status === 'waiting' && (
                     <button
@@ -309,10 +451,25 @@ export const TeacherDashboard: React.FC = () => {
                       <Play size={18} /> 글쓰기 활동 시작하기! 🎬
                     </button>
                   )}
+
+                  {joinedStudents.length > 0 && (
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ width: '100%', marginTop: '10px', background: '#ffebee', borderColor: '#ef9a9a', color: '#c62828', justifyContent: 'center' }}
+                      onClick={async () => {
+                        if (confirm("⚠️ 정말로 모든 참여 학생 목록을 비우고 대기 상태로 초기화하시겠습니까?")) {
+                          await useGameStore.getState().resetStudents(currentRoom.id);
+                          alert('학생 목록이 초기화되었습니다.');
+                        }
+                      }}
+                    >
+                      🔄 학생 목록 초기화 (대기방으로)
+                    </button>
+                  )}
                 </div>
               )}
 
-              {currentRoom.status === 'writing' && (
+              {currentRoom.status === 'writing' && currentRoom.turnMode !== 'free' && (
                 <div style={{ borderTop: '2px dashed #ddd', paddingTop: '20px', marginTop: '20px', textAlign: 'left' }}>
                   <h3>💡 턴 컨트롤</h3>
                   <p style={{ color: '#666', fontSize: '0.85rem', marginBottom: '15px' }}>
@@ -331,6 +488,15 @@ export const TeacherDashboard: React.FC = () => {
                       <SkipForward size={18} /> 턴 강제 넘기기
                     </button>
                   </div>
+                </div>
+              )}
+
+              {currentRoom.status === 'writing' && currentRoom.turnMode === 'free' && (
+                <div style={{ borderTop: '2px dashed #ddd', paddingTop: '20px', marginTop: '20px', textAlign: 'left' }}>
+                  <h3>💡 자유 글쓰기 진행 중</h3>
+                  <p style={{ color: '#666', fontSize: '0.85rem' }}>
+                    순서 제약이 없어 모든 학생들이 동시에 내용을 이어 쓸 수 있습니다.
+                  </p>
                 </div>
               )}
             </div>
@@ -376,6 +542,28 @@ export const TeacherDashboard: React.FC = () => {
                       }
                       return null;
                     })}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
+                    <button 
+                      className="btn btn-primary" 
+                      style={{ flex: '1', justifyContent: 'center', background: '#673ab7' }}
+                      onClick={handleRunAIAnalysis}
+                    >
+                      🤖 AI 모둠 글 분석하기
+                    </button>
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ flex: '1', justifyContent: 'center', background: '#fff3e0', borderColor: '#ffb74d', color: '#e65100' }}
+                      onClick={async () => {
+                        if (confirm("⚠️ 정말로 작성된 모든 문장과 평가, 경고 내역을 비우고 처음부터 다시 시작하시겠습니까?")) {
+                          await useGameStore.getState().resetActivity(currentRoom.id);
+                          alert('글쓰기 활동이 초기화되었습니다.');
+                        }
+                      }}
+                    >
+                      🔄 글쓰기 활동 초기화
+                    </button>
                   </div>
                 </div>
               )}
@@ -460,127 +648,283 @@ export const TeacherDashboard: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', gap: '20px', flexDirection: 'column' }}>
-            {/* 새 이야기방 개설 버튼 토글 */}
+            {/* 새 이야기방 개설 버튼 토글 또는 수정 버튼 토글 */}
             <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+              {projectRooms.length === 0 ? (
                 <div>
-                  <h3 style={{ margin: 0 }}>이 프로젝트 아래의 이야기방 관리</h3>
-                  <p style={{ color: '#666', fontSize: '0.9rem', marginTop: '5px', textAlign: 'left' }}>
-                    수업 내의 모둠별로 방을 추가로 개설할 수 있습니다.
-                  </p>
-                </div>
-                <button className="btn btn-primary" onClick={() => setShowCreateRoomForm(!showCreateRoomForm)}>
-                  {showCreateRoomForm ? '개설 창 닫기' : '➕ 새 이야기방 만들기'}
-                </button>
-              </div>
-
-              {/* 새 방 만들기 폼 */}
-              {showCreateRoomForm && (
-                <form onSubmit={handleCreateRoom} style={{ borderTop: '2px dashed #ddd', marginTop: '20px', paddingTop: '20px', textAlign: 'left' }}>
-                  <div className="input-group">
-                    <label className="input-label">생성할 모둠 개수</label>
-                    <select
-                      className="select-field"
-                      value={groupCount}
-                      onChange={(e) => setGroupCount(parseInt(e.target.value))}
-                    >
-                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
-                        <option key={num} value={num}>{num}개 모둠 일괄 생성</option>
-                      ))}
-                    </select>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+                    <div>
+                      <h3 style={{ margin: 0 }}>이 프로젝트 아래의 이야기방 관리</h3>
+                      <p style={{ color: '#666', fontSize: '0.9rem', marginTop: '5px', textAlign: 'left' }}>
+                        수업 내의 모둠별로 방을 추가로 개설할 수 있습니다.
+                      </p>
+                    </div>
+                    <button className="btn btn-primary" onClick={() => setShowCreateRoomForm(!showCreateRoomForm)}>
+                      {showCreateRoomForm ? '개설 창 닫기' : '➕ 새 이야기방 만들기'}
+                    </button>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-                    <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
-                      <label className="input-label">최대 학생 수</label>
-                      <input
-                        type="number"
-                        className="input-field"
-                        min={1}
-                        max={10}
-                        value={maxStudents}
-                        onChange={(e) => setMaxStudents(parseInt(e.target.value))}
-                      />
-                    </div>
-
-                    <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
-                      <label className="input-label">디자인 테마 레이아웃</label>
-                      <select
-                        className="select-field"
-                        value={layoutMode}
-                        onChange={(e) => setLayoutMode(e.target.value as LayoutMode)}
-                      >
-                        <option value="chat">💬 채팅방 레이아웃</option>
-                        <option value="note">📝 줄글 종합 공책</option>
-                        <option value="storybook">📖 동화책 넘기기</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                    <div className="input-group" style={{ flex: '1', minWidth: '200px' }}>
-                      <label className="input-label">글쓰기 종료 조건</label>
-                      <select
-                        className="select-field"
-                        value={endCondition}
-                        onChange={(e) => setEndCondition(e.target.value as 'limit' | 'free')}
-                      >
-                        <option value="limit">📏 설정된 목표 문장 수 도달 시 종료</option>
-                        <option value="free">🔓 자유로운 글쓰기 (직접 완료 클릭)</option>
-                      </select>
-                    </div>
-
-                    {endCondition === 'limit' && (
-                      <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
-                        <label className="input-label">목표 문장 수</label>
-                        <input
-                          type="number"
-                          className="input-field"
-                          min={2}
-                          max={50}
-                          value={sentenceLimit}
-                          onChange={(e) => setSentenceLimit(parseInt(e.target.value))}
-                        />
+                  {/* 새 방 만들기 폼 */}
+                  {showCreateRoomForm && (
+                    <form onSubmit={handleCreateRoom} style={{ borderTop: '2px dashed #ddd', marginTop: '20px', paddingTop: '20px', textAlign: 'left' }}>
+                      <div className="input-group">
+                        <label className="input-label">생성할 모둠 개수</label>
+                        <select
+                          className="select-field"
+                          value={groupCount}
+                          onChange={(e) => setGroupCount(parseInt(e.target.value))}
+                        >
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
+                            <option key={num} value={num}>{num}개 모둠 일괄 생성</option>
+                          ))}
+                        </select>
                       </div>
-                    )}
-                  </div>
 
-                  {/* 평가 루브릭 설정 */}
-                  <div className="input-group" style={{ borderTop: '2px dashed #ddd', paddingTop: '20px', marginTop: '20px' }}>
-                    <label className="input-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>📊 동료 평가 루브릭 설정</span>
-                      <span style={{ fontSize: '0.85rem', color: '#999' }}>최대 5점 기준</span>
-                    </label>
+                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                        <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
+                          <label className="input-label">최대 학생 수</label>
+                          <input
+                            type="number"
+                            className="input-field"
+                            min={1}
+                            max={10}
+                            value={maxStudents}
+                            onChange={(e) => setMaxStudents(parseInt(e.target.value))}
+                          />
+                        </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
-                      {rubrics.map((rubric) => (
-                        <div key={rubric.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 15px', background: '#f5f5f5', borderRadius: '10px', border: '1px solid #ddd' }}>
-                          <span style={{ fontWeight: 'bold' }}>⭐ {rubric.name}</span>
-                          <button type="button" className="btn btn-secondary" style={{ padding: '6px 12px', boxShadow: 'none' }} onClick={() => removeRubric(rubric.id)}>
-                            <Trash2 size={16} color="red" />
+                        <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
+                          <label className="input-label">디자인 테마 레이아웃</label>
+                          <select
+                            className="select-field"
+                            value={layoutMode}
+                            onChange={(e) => setLayoutMode(e.target.value as LayoutMode)}
+                          >
+                            <option value="chat">💬 채팅방 레이아웃</option>
+                            <option value="note">📝 줄글 종합 공책</option>
+                            <option value="storybook">📖 동화책 넘기기</option>
+                          </select>
+                        </div>
+
+                        <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
+                          <label className="input-label">글쓰기 진행 순서</label>
+                          <select
+                            className="select-field"
+                            value={turnMode}
+                            onChange={(e) => setTurnMode(e.target.value as any)}
+                          >
+                            <option value="random">🎲 랜덤 순서 (시작 시 자동 섞임)</option>
+                            <option value="sequence">📋 지정/입장 순서 (교사 지정 가능)</option>
+                            <option value="free">자유롭게 쓰기 (순서 제약 없음)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <div className="input-group" style={{ flex: '1', minWidth: '200px' }}>
+                          <label className="input-label">글쓰기 종료 조건</label>
+                          <select
+                            className="select-field"
+                            value={endCondition}
+                            onChange={(e) => setEndCondition(e.target.value as 'limit' | 'free')}
+                          >
+                            <option value="limit">📏 설정된 목표 문장 수 도달 시 종료</option>
+                            <option value="free">🔓 자유로운 글쓰기 (직접 완료 클릭)</option>
+                          </select>
+                        </div>
+
+                        {endCondition === 'limit' && (
+                          <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
+                            <label className="input-label">목표 문장 수</label>
+                            <input
+                              type="number"
+                              className="input-field"
+                              min={2}
+                              max={50}
+                              value={sentenceLimit}
+                              onChange={(e) => setSentenceLimit(parseInt(e.target.value))}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 평가 루브릭 설정 */}
+                      <div className="input-group" style={{ borderTop: '2px dashed #ddd', paddingTop: '20px', marginTop: '20px' }}>
+                        <label className="input-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>📊 동료 평가 루브릭 설정</span>
+                          <span style={{ fontSize: '0.85rem', color: '#999' }}>최대 5점 기준</span>
+                        </label>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
+                          {rubrics.map((rubric) => (
+                            <div key={rubric.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 15px', background: '#f5f5f5', borderRadius: '10px', border: '1px solid #ddd' }}>
+                              <span style={{ fontWeight: 'bold' }}>⭐ {rubric.name}</span>
+                              <button type="button" className="btn btn-secondary" style={{ padding: '6px 12px', boxShadow: 'none' }} onClick={() => removeRubric(rubric.id)}>
+                                <Trash2 size={16} color="red" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="새로운 평가 기준 항목 입력..."
+                            value={newRubricName}
+                            onChange={(e) => setNewRubricName(e.target.value)}
+                          />
+                          <button type="button" className="btn btn-secondary" onClick={addRubric}>
+                            <Plus size={18} /> 추가
                           </button>
                         </div>
-                      ))}
-                    </div>
+                      </div>
 
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="새로운 평가 기준 항목 입력..."
-                        value={newRubricName}
-                        onChange={(e) => setNewRubricName(e.target.value)}
-                      />
-                      <button type="button" className="btn btn-secondary" onClick={addRubric}>
-                        <Plus size={18} /> 추가
+                      <button type="submit" className="btn btn-accent" style={{ width: '100%', justifyContent: 'center', marginTop: '20px' }}>
+                        이야기방 개설하기 🚀
                       </button>
+                    </form>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+                    <div style={{ textAlign: 'left' }}>
+                      <h3 style={{ margin: 0 }}>이 프로젝트 아래의 이야기방 관리</h3>
+                      <p style={{ color: '#4caf50', fontSize: '0.95rem', fontWeight: 'bold', marginTop: '5px' }}>
+                        이미 활동방이 개설되어 운영 중입니다. 한 프로젝트에는 이야기방을 한 번만 개설하여 진행합니다.
+                      </p>
                     </div>
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ borderColor: '#673ab7', color: '#673ab7' }}
+                      onClick={() => {
+                        const firstRoom = projectRooms[0];
+                        if (firstRoom) {
+                          setMaxStudents(firstRoom.maxStudents);
+                          setLayoutMode(firstRoom.layoutMode);
+                          setEndCondition(firstRoom.endCondition);
+                          setSentenceLimit(firstRoom.sentenceLimit || 10);
+                          setRubrics(firstRoom.rubrics || []);
+                          setTurnMode(firstRoom.turnMode || 'random');
+                        }
+                        setShowEditRoomForm(!showEditRoomForm);
+                      }}
+                    >
+                      {showEditRoomForm ? '설정 수정 닫기' : '⚙️ 활동 설정 수정'}
+                    </button>
                   </div>
 
-                  <button type="submit" className="btn btn-accent" style={{ width: '100%', justifyContent: 'center', marginTop: '20px' }}>
-                    이야기방 개설하기 🚀
-                  </button>
-                </form>
+                  {/* 방 설정 수정 폼 */}
+                  {showEditRoomForm && (
+                    <form onSubmit={handleUpdateRoomsConfig} style={{ borderTop: '2px dashed #ddd', marginTop: '20px', paddingTop: '20px', textAlign: 'left' }}>
+                      <h3 style={{ color: '#673ab7', marginBottom: '15px' }}>⚙️ 이야기방 설정 수정 (모든 모둠에 일괄 적용)</h3>
+                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                        <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
+                          <label className="input-label">최대 학생 수</label>
+                          <input
+                            type="number"
+                            className="input-field"
+                            min={1}
+                            max={10}
+                            value={maxStudents}
+                            onChange={(e) => setMaxStudents(parseInt(e.target.value))}
+                          />
+                        </div>
+
+                        <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
+                          <label className="input-label">디자인 테마 레이아웃</label>
+                          <select
+                            className="select-field"
+                            value={layoutMode}
+                            onChange={(e) => setLayoutMode(e.target.value as LayoutMode)}
+                          >
+                            <option value="chat">💬 채팅방 레이아웃</option>
+                            <option value="note">📝 줄글 종합 공책</option>
+                            <option value="storybook">📖 동화책 넘기기</option>
+                          </select>
+                        </div>
+
+                        <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
+                          <label className="input-label">글쓰기 진행 순서</label>
+                          <select
+                            className="select-field"
+                            value={turnMode}
+                            onChange={(e) => setTurnMode(e.target.value as any)}
+                          >
+                            <option value="random">🎲 랜덤 순서 (시작 시 자동 섞임)</option>
+                            <option value="sequence">📋 지정/입장 순서 (교사 지정 가능)</option>
+                            <option value="free">자유롭게 쓰기 (순서 제약 없음)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <div className="input-group" style={{ flex: '1', minWidth: '200px' }}>
+                          <label className="input-label">글쓰기 종료 조건</label>
+                          <select
+                            className="select-field"
+                            value={endCondition}
+                            onChange={(e) => setEndCondition(e.target.value as 'limit' | 'free')}
+                          >
+                            <option value="limit">📏 설정된 목표 문장 수 도달 시 종료</option>
+                            <option value="free">🔓 자유로운 글쓰기 (직접 완료 클릭)</option>
+                          </select>
+                        </div>
+
+                        {endCondition === 'limit' && (
+                          <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
+                            <label className="input-label">목표 문장 수</label>
+                            <input
+                              type="number"
+                              className="input-field"
+                              min={2}
+                              max={50}
+                              value={sentenceLimit}
+                              onChange={(e) => setSentenceLimit(parseInt(e.target.value))}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 평가 루브릭 설정 */}
+                      <div className="input-group" style={{ borderTop: '2px dashed #ddd', paddingTop: '20px', marginTop: '20px' }}>
+                        <label className="input-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>📊 동료 평가 루브릭 설정</span>
+                          <span style={{ fontSize: '0.85rem', color: '#999' }}>최대 5점 기준</span>
+                        </label>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
+                          {rubrics.map((rubric) => (
+                            <div key={rubric.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 15px', background: '#f5f5f5', borderRadius: '10px', border: '1px solid #ddd' }}>
+                              <span style={{ fontWeight: 'bold' }}>⭐ {rubric.name}</span>
+                              <button type="button" className="btn btn-secondary" style={{ padding: '6px 12px', boxShadow: 'none' }} onClick={() => removeRubric(rubric.id)}>
+                                <Trash2 size={16} color="red" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="새로운 평가 기준 항목 입력..."
+                            value={newRubricName}
+                            onChange={(e) => setNewRubricName(e.target.value)}
+                          />
+                          <button type="button" className="btn btn-secondary" onClick={addRubric}>
+                            <Plus size={18} /> 추가
+                          </button>
+                        </div>
+                      </div>
+
+                      <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: '20px', background: '#673ab7' }}>
+                        설정 수정 저장하기 💾
+                      </button>
+                    </form>
+                  )}
+                </div>
               )}
             </div>
 
@@ -593,59 +937,163 @@ export const TeacherDashboard: React.FC = () => {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '15px' }}>
-                  {projectRooms.map((room) => (
-                    <div key={room.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 20px', border: '2.5px solid #333', borderRadius: '15px', background: '#fff', boxShadow: '3px 3px 0 #333' }}>
-                      <div style={{ textAlign: 'left' }}>
-                        <span style={{ 
-                          fontSize: '0.8rem', 
-                          fontWeight: 'bold', 
-                          color: '#fff',
-                          background: room.status === 'completed' ? '#4caf50' : room.status === 'writing' ? '#2196f3' : '#ff9800',
-                          padding: '3px 8px',
-                          borderRadius: '10px',
-                          marginRight: '10px'
-                        }}>
-                          {room.status === 'waiting' && '대기 중'}
-                          {room.status === 'writing' && '진행 중'}
-                          {room.status === 'evaluating' && '평가 대기'}
-                          {room.status === 'completed' && '완료됨'}
-                        </span>
-                        <strong style={{ fontSize: '1.15rem' }}>{room.title} (코드: {room.id})</strong>
-                        <div style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px' }}>
-                          테마: {room.layoutMode} | {room.sentences?.length || 0}개 문장 작성됨
-                        </div>
-                        <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <code style={{ fontSize: '0.85rem', background: '#eee', padding: '3px 6px', borderRadius: '5px' }}>
-                            {window.location.origin}/join?code={room.id}
-                          </code>
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none' }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigator.clipboard.writeText(`${window.location.origin}/join?code=${room.id}`);
-                              alert(`${room.title} 접속 링크가 복사되었습니다!`);
-                            }}
-                          >
-                            링크 복사
-                          </button>
-                        </div>
-                      </div>
+                  {projectRooms.map((room) => {
+                    const joinedCount = Object.keys(room.students || {}).length;
+                    const onlineCount = Object.values(room.students || {}).filter(s => s.isOnline).length;
+                    const warningCount = room.warningLogs?.length || 0;
+                    const hasSentences = room.sentences && room.sentences.length > 0;
 
-                      <div style={{ display: 'flex', gap: '10px' }}>
-                        {room.status !== 'completed' ? (
-                          <button className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.9rem' }} onClick={() => setActiveRoomId(room.id)}>
-                            {room.status === 'evaluating' ? '평가 기록' : '입장/모니터링'}
-                          </button>
-                        ) : (
-                          <button className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '0.9rem', borderColor: '#4caf50' }} onClick={() => setViewingArchiveRoom(room)}>
-                            <Eye size={16} color="#4caf50" /> 기록 조회 (아카이브)
-                          </button>
+                    return (
+                      <div key={room.id} style={{ display: 'flex', flexDirection: 'column', padding: '20px', border: '2.5px solid #333', borderRadius: '15px', background: '#fff', boxShadow: '4px 4px 0 #333', gap: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+                          <div style={{ textAlign: 'left' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                              <span style={{ 
+                                fontSize: '0.8rem', 
+                                fontWeight: 'bold', 
+                                color: '#fff',
+                                background: room.status === 'completed' ? '#4caf50' : room.status === 'writing' ? '#2196f3' : room.status === 'evaluating' ? '#9c27b0' : '#ff9800',
+                                padding: '3px 8px',
+                                borderRadius: '10px'
+                              }}>
+                                {room.status === 'waiting' && '대기 중'}
+                                {room.status === 'writing' && '진행 중'}
+                                {room.status === 'evaluating' && '평가 대기'}
+                                {room.status === 'completed' && '완료됨'}
+                              </span>
+                              
+                              <span style={{ 
+                                fontSize: '0.8rem', 
+                                fontWeight: 'bold', 
+                                color: '#333',
+                                border: '1.5px solid #333',
+                                background: '#e0f2f1',
+                                padding: '2px 8px',
+                                borderRadius: '10px'
+                              }}>
+                                👥 참여: {joinedCount}/{room.maxStudents}명 (접속: {onlineCount}명)
+                              </span>
+
+                              {warningCount > 0 && (
+                                <span style={{ 
+                                  fontSize: '0.8rem', 
+                                  fontWeight: 'bold', 
+                                  color: '#fff',
+                                  background: '#e53935',
+                                  padding: '3px 8px',
+                                  borderRadius: '10px'
+                                }}>
+                                  ⚠️ 경고: {warningCount}회
+                                </span>
+                              )}
+                            </div>
+                            
+                            <strong style={{ fontSize: '1.25rem' }}>{room.title} (코드: {room.id})</strong>
+                            
+                            <div style={{ color: '#666', fontSize: '0.9rem', marginTop: '5px' }}>
+                              테마: {room.layoutMode === 'chat' ? '💬 채팅' : room.layoutMode === 'note' ? '📝 줄글' : '📖 동화책'} |{' '}
+                              순서: {room.turnMode === 'free' ? '자유' : room.turnMode === 'sequence' ? '지정' : '랜덤'} |{' '}
+                              {room.sentences?.length || 0}개 문장 작성됨
+                            </div>
+                            
+                            <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <code style={{ fontSize: '0.85rem', background: '#eee', padding: '4px 8px', borderRadius: '5px' }}>
+                                {window.location.origin}/join?code={room.id}
+                              </code>
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none' }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard.writeText(`${window.location.origin}/join?code=${room.id}`);
+                                  alert(`${room.title} 접속 링크가 복사되었습니다!`);
+                                }}
+                              >
+                                링크 복사
+                              </button>
+                              
+                              <button
+                                type="button"
+                                className={`btn btn-secondary ${!hasSentences ? 'btn-disabled' : ''}`}
+                                style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none' }}
+                                disabled={!hasSentences}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpandedStoryRoomIds(prev => ({ ...prev, [room.id]: !prev[room.id] }));
+                                }}
+                              >
+                                {expandedStoryRoomIds[room.id] ? '📖 완성글 접기 ▲' : '📖 완성글 보기 ▼'}
+                              </button>
+
+                              {warningCount > 0 && (
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none', background: '#ffebee', color: '#c62828', borderColor: '#ef9a9a' }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedWarningRoomIds(prev => ({ ...prev, [room.id]: !prev[room.id] }));
+                                  }}
+                                >
+                                  {expandedWarningRoomIds[room.id] ? '⚠️ 경고 접기 ▲' : '⚠️ 경고 기록 보기 ▼'}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {room.status === 'waiting' && (
+                              <button
+                                className="btn btn-primary"
+                                style={{ padding: '8px 16px', fontSize: '0.9rem', background: '#4caf50' }}
+                                onClick={() => startRoom(room.id)}
+                              >
+                                시작
+                              </button>
+                            )}
+                            {room.status !== 'completed' ? (
+                              <button className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.9rem' }} onClick={() => setActiveRoomId(room.id)}>
+                                {room.status === 'evaluating' ? '평가 기록' : '입장/모니터링'}
+                              </button>
+                            ) : (
+                              <button className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '0.9rem', borderColor: '#4caf50' }} onClick={() => setViewingArchiveRoom(room)}>
+                                <Eye size={16} color="#4caf50" /> 기록 조회 (아카이브)
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 완성글 아코디언 */}
+                        {expandedStoryRoomIds[room.id] && hasSentences && (
+                          <div style={{ padding: '12px 18px', background: '#fffde7', border: '2px solid #333', borderRadius: '12px', textAlign: 'left' }}>
+                            <p style={{ margin: 0, fontWeight: 'bold', fontSize: '0.95rem', color: '#555', marginBottom: '8px' }}>✍️ 현재 작성된 이야기 내용:</p>
+                            <div style={{ fontSize: '1.05rem', lineHeight: '1.6' }}>
+                              {room.sentences.map((s) => (
+                                <span key={s.id} style={{ marginRight: '6px' }}>
+                                  {s.text} <span style={{ fontSize: '0.8rem', color: '#666', background: '#eef2f3', padding: '2px 6px', borderRadius: '10px' }}>({s.writer})</span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 경고 기록 아코디언 */}
+                        {expandedWarningRoomIds[room.id] && room.warningLogs && room.warningLogs.length > 0 && (
+                          <div style={{ padding: '12px 18px', background: '#ffebee', border: '2px solid #ef9a9a', borderRadius: '12px', textAlign: 'left' }}>
+                            <p style={{ margin: 0, fontWeight: 'bold', fontSize: '0.95rem', color: '#c62828', marginBottom: '8px' }}>⚠️ 비속어 / 도배 차단 경고 내역:</p>
+                            <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '0.9rem', color: '#333' }}>
+                              {room.warningLogs.map((log) => (
+                                <li key={log.id} style={{ marginBottom: '4px' }}>
+                                  [학생: <strong>{log.nickname}</strong>] 차단된 텍스트: <span style={{ color: '#d32f2f', fontWeight: 'bold' }}>"{log.text}"</span> ({log.reason})
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
                         )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -799,6 +1247,78 @@ export const TeacherDashboard: React.FC = () => {
 
             <div style={{ textAlign: 'center', marginTop: '25px' }}>
               <button className="btn btn-secondary" onClick={() => setViewingArchiveRoom(null)}>
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* AI 분석 진행 중 모달 */}
+      {isAnalyzing && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '450px' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', margin: '20px 0' }}>
+              <div className="typing-dot" style={{ width: '12px', height: '12px', background: '#673ab7' }} />
+              <div className="typing-dot" style={{ width: '12px', height: '12px', background: '#673ab7', animationDelay: '0.2s' }} />
+              <div className="typing-dot" style={{ width: '12px', height: '12px', background: '#673ab7', animationDelay: '0.4s' }} />
+            </div>
+            <h2 style={{ marginTop: '10px' }}>Gemini가 모둠 활동을 분석하고 있습니다...</h2>
+            <p style={{ color: '#666' }}>학생들의 협동성, 창의성, 언어 습관을 분석하여 보고서를 작성하고 있어요. 잠시만 기다려 주세요! 🧠</p>
+          </div>
+        </div>
+      )}
+
+      {/* AI 분석 결과 보고서 모달 */}
+      {aiReport && (
+        <div className="modal-overlay" onClick={() => setAiReport(null)}>
+          <div className="modal-content modal-terms-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '750px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <button className="close-modal-btn" onClick={() => setAiReport(null)}>×</button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
+              <span style={{ fontSize: '2rem' }}>🤖</span>
+              <h2>AI 모둠 활동 분석 보고서</h2>
+            </div>
+
+            <div style={{ 
+              background: '#f9f9f9', 
+              border: '2.5px solid #333', 
+              borderRadius: '15px', 
+              padding: '20px', 
+              marginBottom: '20px',
+              fontFamily: 'inherit',
+              lineHeight: '1.6',
+              boxShadow: '4px 4px 0px #333'
+            }}>
+              {renderMarkdown(aiReport)}
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button 
+                className="btn btn-primary" 
+                style={{ background: '#4caf50' }}
+                onClick={() => {
+                  const commentMatch = aiReport.match(/#### 👨‍🏫 4\. 교사용 추천 종합 피드백\n([\s\S]+)$/) 
+                                    || aiReport.match(/👨‍🏫 4\. 교사용 추천 종합 피드백\n([\s\S]+)$/)
+                                    || aiReport.match(/종합 피드백 코멘트[\s\S]*?\n([\s\S]+)$/)
+                                    || [null, aiReport];
+                  let extractedText = commentMatch[1] ? commentMatch[1].trim() : aiReport;
+                  extractedText = extractedText.replace(/^>\s*/gm, '').replace(/^\*\s*/gm, '').replace(/^- \s*/gm, '');
+                  setEvalComment(extractedText);
+                  setAiReport(null);
+                  alert('👨‍🏫 AI 추천 코멘트가 하단 교사 피드백 종합 의견 란에 입력되었습니다!');
+                }}
+              >
+                ✍️ 교사 평가 의견에 즉시 적용
+              </button>
+              <button 
+                className="btn btn-secondary" 
+                onClick={() => {
+                  navigator.clipboard.writeText(aiReport);
+                  alert('분석 보고서 전체 내용이 클립보드에 복사되었습니다!');
+                }}
+              >
+                📋 전체 복사
+              </button>
+              <button className="btn btn-secondary" onClick={() => setAiReport(null)}>
                 닫기
               </button>
             </div>

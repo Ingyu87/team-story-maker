@@ -8,19 +8,90 @@ export interface FilterResult {
   suggestedText?: string; // 대안 텍스트 추천 (선택 사항)
 }
 
+// 로컬 차단 욕설 및 비속어 목록
+const KOREAN_SWEARS = [
+  '존나', '존내', '개새끼', '새끼', '씨발', '시발', '썅', '지랄', '병신', '엠창', '호로', '또라이', '뒈져', '닥쳐',
+  '대가리', '머가리', '꺼져', '빡대가리', '좃', '좆', '씹', '랄지', '조까', '존맛', '개같', '미친'
+];
+
 /**
- * Gemini API를 활용하여 초등학생이 입력한 문장을 실시간 검사합니다.
- * 욕설, 비속어, 사이버 불링, 혹은 의미 없는 단순 자음/모음 반복(예: ㅋㅋㅋㅋ, ㄴㅇㄹㄴㅇ)을 필터링합니다.
+ * 1차로 로컬에서 욕설, 자모음 반복, 키보드 연타를 즉시 감지하여 차단합니다.
+ * API 호출 전에 실행되어 빠른 속도와 안정성을 보장합니다.
+ */
+function localFilterCheck(text: string): FilterResult | null {
+  const normalized = text.replace(/\s+/g, '').toLowerCase();
+
+  // 1. 욕설 검출
+  for (const swear of KOREAN_SWEARS) {
+    if (normalized.includes(swear)) {
+      return {
+        isSafe: false,
+        reason: '친구에게 상처를 줄 수 있는 거친 표현이나 욕설이 포함되어 있어요. 고운 말을 사용해 보아요!',
+        suggestedText: text.replace(new RegExp(swear, 'gi'), '○○')
+      };
+    }
+  }
+
+  // 2. 무의미한 자모음 연타 및 문자 반복 검출 (예: ㅋㅋㅋㅋ, ㅎㅎㅎㅎ, ㅠㅠㅠㅠ)
+  // 임의의 한 문자(자음, 모음, 알파벳 포함)가 4번 이상 연속 반복되는 경우 감지
+  const repeatedCharRegex = /([ㄱ-ㅎㅏ-ㅣ가-힣a-zA-Z0-9])\1{3,}/;
+  if (repeatedCharRegex.test(normalized)) {
+    return {
+      isSafe: false,
+      reason: '똑같은 글자가 너무 여러 번 반복되었어요. 이야기의 흐름을 잇는 올바른 문장으로 다시 써 주세요!',
+      suggestedText: text.replace(/([ㄱ-ㅎㅏ-ㅣ가-힣a-zA-Z0-9])\1{3,}/g, '$1')
+    };
+  }
+
+  // 3. 키보드 연타 (ㅁㄴㅇㄹ, ㄴㅇㄹㄴㅇ, asdf 등)
+  const keymashPatterns = [
+    'ㅁㄴㅇㄹ', 'ㄴㅇㄹㄴ', 'ㅇㄹㄴㅇ', 'ㄹㄴㅇㄹ', 'asdf', 'sdfg', 'dfgh', 'hjkl', 'qwer'
+  ];
+  for (const mash of keymashPatterns) {
+    if (normalized.includes(mash)) {
+      return {
+        isSafe: false,
+        reason: '의미가 없거나 장난치는 글자가 포함되어 있어요. 친구들이 이해할 수 있는 올바른 이야기를 써 주세요!',
+        suggestedText: ''
+      };
+    }
+  }
+
+  // 4. 단독 자음/모음 및 너무 짧은 입력 차단
+  if (text.trim().length <= 1) {
+    const singleChar = text.trim();
+    const isKoreanChar = /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(singleChar);
+    if (isKoreanChar) {
+      return {
+        isSafe: false,
+        reason: '한 글자만 쓰면 이야기가 이어지기 어려워요! 한 문장으로 조금 더 자세히 표현해 볼까요?',
+        suggestedText: singleChar + '했습니다.'
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Gemini API와 로컬 필터를 결합하여 문장을 실시간 검사합니다.
  */
 export async function filterSentence(text: string): Promise<FilterResult> {
-  if (!apiKey) {
-    console.warn("Gemini API Key is missing. Skipping filter check.");
+  // 1. 로컬 필터 즉시 검사 (최우선순위)
+  const localResult = localFilterCheck(text);
+  if (localResult) {
+    return localResult;
+  }
+
+  // Gemini API 키가 없거나 플레이스홀더인 경우 로컬 검사만 적용
+  const isPlaceholder = !apiKey || apiKey === 'your_gemini_api_key_here';
+  if (isPlaceholder) {
+    console.warn("Gemini API Key is missing or placeholder. Running local filter only.");
     return { isSafe: true };
   }
 
   try {
     const ai = new GoogleGenerativeAI(apiKey);
-    // gemini-2.5-flash 또는 gemini-1.5-flash 등 적절한 모델 사용
     const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
     const prompt = `
@@ -56,7 +127,92 @@ export async function filterSentence(text: string): Promise<FilterResult> {
     return parsed;
   } catch (error) {
     console.error("Gemini API Error in filtering:", error);
-    // API 에러 시 일단은 넘어가되 로그를 찍음 (개발 편의성 및 안정성 목적)
+    // API 에러 시에도 일단 통과하되, 로컬에서 거른 단어가 아닌 이상 안전한 것으로 간주
     return { isSafe: true };
+  }
+}
+
+/**
+ * 학생들이 완성한 이야기 및 활동 내역을 Gemini API를 통해 교육적 기준으로 분석합니다.
+ */
+export async function analyzeStoryAI(
+  sentences: { writer: string; text: string }[],
+  students: string[],
+  warningLogs?: { nickname: string; text: string; reason: string; timestamp: number }[]
+): Promise<string> {
+  const isPlaceholder = !apiKey || apiKey === 'your_gemini_api_key_here';
+  
+  if (isPlaceholder) {
+    // API 키가 비어있거나 플레이스홀더인 경우 로컬 시뮬레이션 결과 제공
+    return `### 🤖 AI 모둠 활동 분석 보고서 (로컬 시뮬레이션)
+
+> [!NOTE]
+> 현재 Gemini API Key가 설정되지 않았거나 더미값 상태입니다. 실제 API 키를 등록하면 더 정확하고 생생한 분석 피드백이 실시간으로 제공됩니다.
+
+#### 🤝 1. 모둠 협동성 분석
+- **활동 참여도**: 참여 학생(${students.join(', ')})이 서로 순서를 존중하며 안정적으로 작성에 동참했습니다.
+- **문장 연결성**: 앞사람의 문장 흐름을 유지하며 글을 완성하고자 힘썼습니다.
+- **보완 제안**: 순서 대기 중에 친구의 글을 조금 더 집중해서 읽을 수 있도록 지도해 주세요.
+
+#### 💡 2. 소설의 창의성 및 이야기 흐름
+- **소재의 독창성**: 4학년 수준에서 접근하기 쉬운 흥미로운 소재를 활용했습니다.
+- **이야기 구조**: 처음(시작)-가운데(사건)-끝(결말)의 기본 흐름을 구성하려고 노력했습니다.
+
+#### 📝 3. 올바른 언어 사용 및 맞춤법 피드백
+- **비속어/장난 내역**: ${warningLogs && warningLogs.length > 0 ? `경고가 총 ${warningLogs.length}회 감지되었습니다. 욕설이나 반복적인 문체 사용에 대한 지도 편달이 필요합니다.` : '감지된 비속어나 장난 문장이 없어 매우 훌륭합니다.'}
+- **맞춤법 개선**: 띄어쓰기 및 마침표 사용 등 기본적인 국어 작문 습관을 한 번 더 보듬어 주시면 좋습니다.
+
+#### 👨‍🏫 4. 교사용 추천 종합 피드백
+- **피드백 제안**: "친구들의 생각을 잘 엮어서 멋진 릴레이 이야기를 완성해 냈네요! 모둠 친구들이 함께 상상력을 키우며 협동하는 모습이 참 아름답습니다. 다음에는 문장 간의 호응을 생각하며 더 풍부한 표현을 사용해 봅시다."`;
+  }
+
+  try {
+    const ai = new GoogleGenerativeAI(apiKey);
+    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+    const storyText = sentences.map((s, idx) => `${idx + 1}. [${s.writer}] ${s.text}`).join('\n');
+    const studentList = students.join(', ');
+    const warningsText = warningLogs && warningLogs.length > 0 
+      ? warningLogs.map((w, idx) => `${idx + 1}. [${w.nickname}] "${w.text}" (${w.reason})`).join('\n')
+      : '없음';
+
+    const prompt = `
+당신은 초등학교 4학년 국어 수업에서 학생들의 릴레이 소설(협동 글쓰기) 활동을 실시간으로 분석하고 평가 피드백을 작성해주는 전문 수석 교사입니다.
+모둠 학생들이 협력하여 만든 소설 본문과 참여 학생 목록, 필터링 경고 로그를 바탕으로 이 활동을 다각도로 분석해 주세요.
+
+초등학교 4학년 수준에 적합하도록 따뜻하고 격려하는 어조로 작성하되, 교사가 학생 지도에 활용하거나 생활기록부/평가 기록에 그대로 활용할 수 있도록 전문적인 분석을 제공해 주세요.
+
+[모둠 정보]
+- 참여 학생: ${studentList}
+- 작성된 소설 내용:
+${storyText || '(작성된 문장이 없습니다.)'}
+
+- AI 필터링 경고 내역:
+${warningsText}
+
+다음 네 가지 항목을 포함하여 가독성 좋은 마크다운(Markdown) 형식으로 최종 분석 보고서를 응답해 주세요.
+
+1. **🤝 모둠 협동성 분석**
+   - 앞 사람의 문장을 이어받아 이야기를 매끄럽게 연결하려는 노력이 돋보인 부분(구체적인 문장 번호 언급)을 칭찬해 주세요.
+   - 턴 진행이 원활했는지, 학생들이 골고루 참여했는지 설명해 주세요.
+
+2. **💡 소설의 창의성 및 이야기 흐름**
+   - 이야기의 소재나 전개에서 창의성이 돋보인 부분은 무엇인지 분석해 주세요.
+   - 이야기의 처음-가운데-끝 흐름이 자연스러운지 평가해 주세요.
+
+3. **📝 올바른 언어 사용 및 맞춤법 피드백**
+   - 4학년 수준에서 발견되는 아쉬운 맞춤법, 띄어쓰기, 문장 성분의 호응(예: 주어와 서술어의 호응)이 있다면 교정 제안을 포함해 지적해 주세요.
+   - 비속어나 무의미한 텍스트로 경고를 받은 내역이 있다면, 이에 대한 지도 방향성도 짧게 제안해 주세요.
+
+4. **👨‍🏫 교사용 추천 종합 피드백**
+   - 교사가 생활기록부나 피드백란에 입력하기 좋은 모둠 전체 및 개별 핵심 학생에 대한 종합 피드백 코멘트를 3~4줄로 제안해 주세요.
+
+응답은 마크다운 문법으로 바로 렌더링할 수 있도록 작성해 주세요. (예: ##, 1., 2., *, bold 등 활용)`;
+
+    const result = await model.generateContent(prompt);
+    return result.response.text();
+  } catch (error) {
+    console.error("Gemini API Error in analysis:", error);
+    throw new Error("Gemini AI 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
   }
 }
