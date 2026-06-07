@@ -55,7 +55,7 @@ export const TeacherDashboard: React.FC = () => {
   const [showCreateRoomForm, setShowCreateRoomForm] = useState(false);
 
   // 방 생성 Form State
-  const [title, setTitle] = useState('');
+  const [groupCount, setGroupCount] = useState(4);
   const [maxStudents, setMaxStudents] = useState(4);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('chat');
   const [endCondition, setEndCondition] = useState<'limit' | 'free'>('limit');
@@ -146,22 +146,25 @@ export const TeacherDashboard: React.FC = () => {
   // 이야기방 생성 제출 처리
   const handleCreateRoom = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !selectedProjectId || !title.trim()) return;
+    if (!user || !selectedProjectId) return;
 
     try {
-      const id = await createRoom({
-        title: title.trim(),
-        maxStudents,
-        layoutMode,
-        endCondition,
-        sentenceLimit,
-        rubrics,
-        teacherId: user.uid,
-        projectId: selectedProjectId,
-      });
-      setActiveRoomId(id);
+      // 모둠 개수만큼 루프를 돌며 일괄 생성
+      for (let i = 1; i <= groupCount; i++) {
+        await createRoom({
+          title: `${i}모둠`,
+          maxStudents,
+          layoutMode,
+          endCondition,
+          sentenceLimit,
+          rubrics,
+          teacherId: user.uid,
+          projectId: selectedProjectId,
+        });
+      }
       setShowCreateRoomForm(false);
-      setTitle('');
+      // 룸 리스트 새로고침
+      await loadRoomsByProject(user.uid, selectedProjectId);
     } catch (err) {
       console.error(err);
     }
@@ -475,15 +478,16 @@ export const TeacherDashboard: React.FC = () => {
               {showCreateRoomForm && (
                 <form onSubmit={handleCreateRoom} style={{ borderTop: '2px dashed #ddd', marginTop: '20px', paddingTop: '20px', textAlign: 'left' }}>
                   <div className="input-group">
-                    <label className="input-label">모둠/방 제목</label>
-                    <input
-                      type="text"
-                      className="input-field"
-                      placeholder="예: 백두산 호랑이 모둠방"
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
-                      required
-                    />
+                    <label className="input-label">생성할 모둠 개수</label>
+                    <select
+                      className="select-field"
+                      value={groupCount}
+                      onChange={(e) => setGroupCount(parseInt(e.target.value))}
+                    >
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
+                        <option key={num} value={num}>{num}개 모둠 일괄 생성</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
@@ -609,6 +613,23 @@ export const TeacherDashboard: React.FC = () => {
                         <strong style={{ fontSize: '1.15rem' }}>{room.title} (코드: {room.id})</strong>
                         <div style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px' }}>
                           테마: {room.layoutMode} | {room.sentences?.length || 0}개 문장 작성됨
+                        </div>
+                        <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <code style={{ fontSize: '0.85rem', background: '#eee', padding: '3px 6px', borderRadius: '5px' }}>
+                            {window.location.origin}/join?code={room.id}
+                          </code>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(`${window.location.origin}/join?code=${room.id}`);
+                              alert(`${room.title} 접속 링크가 복사되었습니다!`);
+                            }}
+                          >
+                            링크 복사
+                          </button>
                         </div>
                       </div>
 
