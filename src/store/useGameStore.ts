@@ -28,6 +28,7 @@ interface GameState {
   
   joinRoom: (roomId: string, nickname: string) => Promise<boolean>;
   leaveRoom: (roomId: string, nickname: string) => Promise<void>;
+  removeStudent: (roomId: string, nickname: string) => Promise<void>;
   startRoom: (roomId: string) => Promise<void>;
   submitSentence: (roomId: string, nickname: string, text: string) => Promise<void>;
   updateSentenceText: (roomId: string, sentenceId: string, text: string) => Promise<void>;
@@ -236,6 +237,44 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     } catch (err) {
       console.error('Leave room error:', err);
+    }
+  },
+
+  removeStudent: async (roomId, nickname) => {
+    const formattedRoomId = roomId.toUpperCase();
+    try {
+      const roomRef = ref(db, `rooms/${formattedRoomId}`);
+      const snapshot = await dbGet(roomRef);
+      if (!snapshot.exists()) return;
+
+      const room = normalizeRoom(snapshot.val() as Room);
+      const updatedStudents = { ...room.students };
+      const updatedTypingStatus = { ...room.typingStatus };
+      const oldOrder = room.studentOrder || [];
+      const removedIndex = oldOrder.indexOf(nickname);
+      const updatedOrder = oldOrder.filter(name => name !== nickname);
+
+      delete updatedStudents[nickname];
+      delete updatedTypingStatus[nickname];
+
+      let nextTurnIndex = room.currentTurnIndex || 0;
+      if (updatedOrder.length === 0) {
+        nextTurnIndex = 0;
+      } else if (removedIndex > -1 && removedIndex < nextTurnIndex) {
+        nextTurnIndex -= 1;
+      } else if (nextTurnIndex >= updatedOrder.length) {
+        nextTurnIndex = 0;
+      }
+
+      await dbUpdate(roomRef, {
+        students: updatedStudents,
+        studentOrder: updatedOrder,
+        typingStatus: updatedTypingStatus,
+        currentTurnIndex: nextTurnIndex,
+        status: updatedOrder.length === 0 && room.status === 'writing' ? 'waiting' : room.status,
+      });
+    } catch (err) {
+      console.error('Failed to remove student:', err);
     }
   },
 

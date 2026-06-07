@@ -26,6 +26,7 @@ export const StudentApp: React.FC = () => {
   
   // AI 필터링 경고 모달 상태
   const [filterAlert, setFilterAlert] = useState<FilterResult | null>(null);
+  const removedFromRoomRef = useRef(false);
 
   // 1. 방 실시간 구독 및 탭 언로드 시 오프라인 처리
   useEffect(() => {
@@ -50,6 +51,15 @@ export const StudentApp: React.FC = () => {
   useEffect(() => {
     if (currentRoom && (currentRoom.status === 'evaluating' || currentRoom.status === 'completed')) {
       navigate(`/evaluation/${roomId}/${nickname}`);
+    }
+  }, [currentRoom, navigate, nickname, roomId]);
+
+  useEffect(() => {
+    if (!currentRoom || !nickname || removedFromRoomRef.current) return;
+    if (!currentRoom.students?.[nickname]) {
+      removedFromRoomRef.current = true;
+      alert('선생님이 이야기방에서 내보냈습니다. 다시 참여하려면 선생님께 확인해 주세요.');
+      navigate(`/join?code=${roomId || ''}`, { replace: true });
     }
   }, [currentRoom, navigate, nickname, roomId]);
 

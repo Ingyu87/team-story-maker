@@ -37,6 +37,7 @@ export const TeacherDashboard: React.FC = () => {
     skipTurn, 
     submitTeacherEvaluation, 
     completeRoom,
+    removeStudent,
     projects,
     projectRooms,
     loadProjects,
@@ -239,6 +240,14 @@ export const TeacherDashboard: React.FC = () => {
     order[targetIdx] = temp;
 
     await updateStudentOrder(activeRoomId, order);
+  };
+
+  const handleRemoveStudent = async (nickname: string) => {
+    if (!activeRoomId) return;
+    if (confirm(`⚠️ ${nickname} 학생을 이 이야기방에서 내보내시겠습니까?`)) {
+      await removeStudent(activeRoomId, nickname);
+      alert(`${nickname} 학생을 내보냈습니다.`);
+    }
   };
 
   // AI 모둠 활동 분석
@@ -447,6 +456,14 @@ export const TeacherDashboard: React.FC = () => {
                             >
                               ▼
                             </button>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none', border: '1.5px solid #ef9a9a', background: '#ffebee', color: '#c62828' }}
+                              onClick={() => handleRemoveStudent(st.nickname)}
+                            >
+                              내보내기
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -472,6 +489,14 @@ export const TeacherDashboard: React.FC = () => {
                               ⚠️ {studentWarningCounts[st.nickname]}회
                             </span>
                           )}
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ padding: '2px 7px', fontSize: '0.75rem', boxShadow: 'none', border: '1.5px solid #ef9a9a', background: '#ffebee', color: '#c62828' }}
+                            onClick={() => handleRemoveStudent(st.nickname)}
+                          >
+                            내보내기
+                          </button>
                         </div>
                       ))}
                     </div>
