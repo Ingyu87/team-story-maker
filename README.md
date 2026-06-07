@@ -1,73 +1,59 @@
-# React + TypeScript + Vite
+# 우리들의 이야기 릴레이
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+초등 협동 글쓰기 수업을 위한 React + Firebase 웹앱입니다. 교사는 프로젝트와 모둠별 이야기방을 만들고, 학생은 공유 링크로 들어와 순서대로 글을 이어 씁니다. Gemini는 서버리스 API를 통해 문장 필터링과 교사용 활동 분석에 사용됩니다.
 
-Currently, two official plugins are available:
+## 주요 기능
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- 교사용 Firebase 이메일 로그인
+- 학급/수업 프로젝트 폴더 관리
+- 모둠별 이야기방 생성 및 실시간 참여자 모니터링
+- 랜덤/지정/자유 글쓰기 순서
+- 문장/문단 단위 릴레이 글쓰기
+- 학생 입력 로컬 필터 + Gemini 필터링
+- 모둠별 동료 평가와 교사 평가
+- Gemini 기반 교사용 활동 분석 보고서
 
-## React Compiler
+## 환경 변수
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+`.env.local` 또는 배포 환경 변수에 아래 값을 설정합니다.
 
-## Expanding the ESLint configuration
+```bash
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_DATABASE_URL=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_STORAGE_BUCKET=
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+GEMINI_API_KEY=
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+`GEMINI_API_KEY`는 브라우저 번들에 포함되면 안 됩니다. `VITE_GEMINI_API_KEY`를 쓰지 말고, Vercel 환경 변수에 서버 전용으로 등록하세요.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## 실행
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
+
+Vite 개발 서버만 사용할 경우 `/api/gemini` 서버리스 함수가 없어서 Gemini 호출은 실패하고 로컬 필터/시뮬레이션으로 대체됩니다. Gemini까지 로컬에서 확인하려면 Vercel 개발 서버를 사용하세요.
+
+```bash
+npx vercel dev
+```
+
+## 검증
+
+```bash
+npm run lint
+npm run build
+```
+
+## 배포 전 체크
+
+- Firebase Authentication에서 이메일/비밀번호 로그인을 켭니다.
+- Firebase Realtime Database 보안 규칙을 수업 운영 방식에 맞게 잠급니다.
+- Vercel에 `GEMINI_API_KEY`를 서버 환경 변수로 등록합니다.
+- 이전에 브라우저용 `VITE_GEMINI_API_KEY`를 배포한 적이 있다면 해당 Gemini 키를 폐기하고 새 키를 발급하세요.

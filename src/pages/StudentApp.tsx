@@ -18,14 +18,14 @@ export const StudentApp: React.FC = () => {
     setError 
   } = useGameStore();
 
-  const [inputText, setInputText] = useState('');
+  // 로컬 자동 저장 키
+  const localStorageKey = `relay-story-draft-${roomId}-${nickname}`;
+  const [inputText, setInputText] = useState(() => localStorage.getItem(localStorageKey) || '');
   const [isAiChecking, setIsAiChecking] = useState(false);
+  const [editingSentenceId, setEditingSentenceId] = useState<string | null>(null);
   
   // AI 필터링 경고 모달 상태
   const [filterAlert, setFilterAlert] = useState<FilterResult | null>(null);
-
-  // 로컬 자동 저장 키
-  const localStorageKey = `relay-story-draft-${roomId}-${nickname}`;
 
   // 1. 방 실시간 구독 및 탭 언로드 시 오프라인 처리
   useEffect(() => {
@@ -38,31 +38,25 @@ export const StudentApp: React.FC = () => {
       };
       window.addEventListener('beforeunload', handleBeforeUnload);
 
-      // 로컬스토리지에 저장되어 있던 임시 문장 불러오기
-      const savedDraft = localStorage.getItem(localStorageKey);
-      if (savedDraft) {
-        setInputText(savedDraft);
-      }
-
       return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
         leaveRoom(roomId, nickname);
         unsubscribeRoom(roomId);
       };
     }
-  }, [roomId, nickname]);
+  }, [roomId, nickname, subscribeRoom, leaveRoom, unsubscribeRoom]);
 
   // 방 상태가 평가('evaluating' 또는 'completed')로 전환되면 평가 보드로 리다이렉트
   useEffect(() => {
     if (currentRoom && (currentRoom.status === 'evaluating' || currentRoom.status === 'completed')) {
       navigate(`/evaluation/${roomId}/${nickname}`);
     }
-  }, [currentRoom?.status]);
+  }, [currentRoom, navigate, nickname, roomId]);
 
   // 2. 실시간 타이핑 상태 Firebase 동기화 (간단한 디바운스 적용)
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const text = e.target.value;
     setInputText(text);
     // 로컬스토리지 임시 백업
@@ -112,13 +106,31 @@ export const StudentApp: React.FC = () => {
       return;
     }
 
-    // 통과 시 제출
-    await submitSentence(roomId, nickname, inputText.trim());
+    if (editingSentenceId) {
+      await useGameStore.getState().updateSentenceText(roomId, editingSentenceId, inputText.trim());
+      setEditingSentenceId(null);
+      alert('문장이 수정되었습니다! ✏️');
+    } else {
+      // 통과 시 제출
+      await submitSentence(roomId, nickname, inputText.trim());
+    }
     
     // 상태 및 백업 비우기
     setInputText('');
     localStorage.removeItem(localStorageKey);
     updateTypingStatus(roomId, nickname, '', false);
+  };
+
+  // 마지막으로 쓴 문장 삭제 (다시 쓰기)
+  const handleDeleteLast = async () => {
+    if (!roomId) return;
+    if (confirm('⚠️ 정말로 마지막으로 작성한 문장을 삭제하고 다시 쓰시겠습니까? (이전 사람의 차례로 돌아갑니다.)')) {
+      await useGameStore.getState().deleteLastSentence(roomId);
+      setInputText('');
+      setEditingSentenceId(null);
+      localStorage.removeItem(localStorageKey);
+      alert('마지막 문장이 삭제되어 다시 쓸 수 있게 되었습니다.');
+    }
   };
 
   // 이야기 완성하기 버튼 처리 (자유 모드 시)
@@ -230,20 +242,45 @@ export const StudentApp: React.FC = () => {
 
           {/* 레이아웃 2: 노트 모드 */}
           {currentRoom.layoutMode === 'note' && (
-            <div className="note-container">
+            <div className="note-container" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {currentRoom.sentences && currentRoom.sentences.length > 0 ? (
-                currentRoom.sentences.map((sent) => (
-                  <span 
-                    key={sent.id} 
-                    className="note-sentence" 
-                    style={{ 
-                      backgroundColor: sent.writer === nickname ? '#e8f5e9' : 'transparent',
-                      borderBottom: '2px solid #ddd'
-                    }}
-                  >
-                    {sent.text}{' '}
-                  </span>
-                ))
+                currentRoom.writeUnit === 'paragraph' ? (
+                  currentRoom.sentences.map((sent) => (
+                    <p 
+                      key={sent.id} 
+                      style={{ 
+                        margin: 0,
+                        textIndent: '10px',
+                        backgroundColor: sent.writer === nickname ? '#e8f5e9' : 'transparent',
+                        padding: '5px 10px',
+                        borderRadius: '6px',
+                        borderBottom: '1.5px solid #eee',
+                        lineHeight: '1.6',
+                        fontSize: '1.05rem',
+                        textAlign: 'left'
+                      }}
+                    >
+                      {sent.text}
+                    </p>
+                  ))
+                ) : (
+                  <div style={{ textAlign: 'left', lineHeight: '1.6', fontSize: '1.05rem' }}>
+                    {currentRoom.sentences.map((sent) => (
+                      <span 
+                        key={sent.id} 
+                        className="note-sentence" 
+                        style={{ 
+                          backgroundColor: sent.writer === nickname ? '#e8f5e9' : 'transparent',
+                          borderBottom: '2px solid #ddd',
+                          marginRight: '6px',
+                          display: 'inline-block'
+                        }}
+                      >
+                        {sent.text}
+                      </span>
+                    ))}
+                  </div>
+                )
               ) : (
                 <div style={{ padding: '40px 10px', textAlign: 'center', color: '#999' }}>
                   빈 공책이에요. 이야기의 첫 단추를 멋지게 채워보아요! ✏️
@@ -309,35 +346,100 @@ export const StudentApp: React.FC = () => {
             })}
           </div>
 
+          {/* 내가 작성한 마지막 문장 수정/삭제 제어 배너 */}
+          {currentRoom.sentences && currentRoom.sentences.length > 0 && currentRoom.sentences[currentRoom.sentences.length - 1].writer === nickname && (
+            <div style={{ display: 'flex', gap: '15px', alignItems: 'center', background: '#e3f2fd', border: '2.5px solid #333', borderRadius: '12px', padding: '12px 18px', textAlign: 'left', boxShadow: '3px 3px 0 #333' }}>
+              <span style={{ fontSize: '0.95rem', color: '#1565c0', flex: '1', fontWeight: '500' }}>
+                🙋‍♂️ 내가 방금 전송한 문장: <strong>"{currentRoom.sentences[currentRoom.sentences.length - 1].text}"</strong>
+              </span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button 
+                  type="button"
+                  className="btn btn-secondary" 
+                  style={{ padding: '4px 10px', fontSize: '0.85rem', boxShadow: 'none', background: '#fff', borderColor: '#333' }}
+                  onClick={() => {
+                    setInputText(currentRoom.sentences[currentRoom.sentences.length - 1].text);
+                    setEditingSentenceId(currentRoom.sentences[currentRoom.sentences.length - 1].id);
+                  }}
+                >
+                  ✏️ 수정하기
+                </button>
+                <button 
+                  type="button"
+                  className="btn btn-secondary" 
+                  style={{ padding: '4px 10px', fontSize: '0.85rem', boxShadow: 'none', background: '#ffebee', color: '#c62828', borderColor: '#ef9a9a' }}
+                  onClick={handleDeleteLast}
+                >
+                  🔄 삭제 후 다시 쓰기
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 문장 입력 양식 */}
           <div className="card" style={{ padding: '20px' }}>
             <form onSubmit={handleSend} style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
               <div style={{ flex: '1', position: 'relative' }}>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder={
-                    isMyTurn 
-                      ? '이야기에 이어질 다음 문장을 입력해 주세요. (예: 결국 호랑이는 도망을 쳤습니다.)'
-                      : `${currentTurnPlayer || '친구'}의 입력 순서입니다. 기다려 주세요.`
-                  }
-                  value={inputText}
-                  onChange={handleInputChange}
-                  onPaste={handlePaste}
-                  disabled={!isMyTurn || isAiChecking}
-                  maxLength={100}
-                />
-                <span style={{ position: 'absolute', right: '15px', top: '15px', color: '#999', fontSize: '0.85rem' }}>
-                  {inputText.length} / 100자
+                {currentRoom.writeUnit === 'paragraph' ? (
+                  <textarea
+                    className="input-field"
+                    style={{ minHeight: '100px', resize: 'vertical', paddingRight: '70px', paddingTop: '10px', display: 'block', width: '100%' }}
+                    placeholder={
+                      editingSentenceId
+                        ? '선택한 문단을 수정하여 다시 보내주세요.'
+                        : isMyTurn 
+                        ? '이야기에 이어질 다음 문단을 입력해 주세요. (줄바꿈 가능, 최대 500자)'
+                        : `${currentTurnPlayer || '친구'}의 입력 순서입니다. 기다려 주세요.`
+                    }
+                    value={inputText}
+                    onChange={handleInputChange}
+                    onPaste={handlePaste}
+                    disabled={(!isMyTurn && !editingSentenceId) || isAiChecking}
+                    maxLength={500}
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder={
+                      editingSentenceId
+                        ? '선택한 문장을 수정하여 다시 보내주세요.'
+                        : isMyTurn 
+                        ? '이야기에 이어질 다음 문장을 입력해 주세요. (예: 결국 호랑이는 도망을 쳤습니다.)'
+                        : `${currentTurnPlayer || '친구'}의 입력 순서입니다. 기다려 주세요.`
+                    }
+                    value={inputText}
+                    onChange={handleInputChange}
+                    onPaste={handlePaste}
+                    disabled={(!isMyTurn && !editingSentenceId) || isAiChecking}
+                    maxLength={100}
+                  />
+                )}
+                <span style={{ position: 'absolute', right: '15px', bottom: '15px', color: '#999', fontSize: '0.85rem' }}>
+                  {inputText.length} / {currentRoom.writeUnit === 'paragraph' ? 500 : 100}자
                 </span>
               </div>
               <button
                 type="submit"
-                className={`btn btn-primary ${!isMyTurn || !inputText.trim() || isAiChecking ? 'btn-disabled' : ''}`}
-                style={{ whiteSpace: 'nowrap' }}
+                className={`btn btn-primary ${((!isMyTurn && !editingSentenceId) || !inputText.trim() || isAiChecking) ? 'btn-disabled' : ''}`}
+                style={{ whiteSpace: 'nowrap', background: editingSentenceId ? '#ffb703' : undefined }}
               >
-                {isAiChecking ? 'AI 검사 중...' : '문장 전송 🚀'}
+                {isAiChecking ? 'AI 검사 중...' : editingSentenceId ? '✏️ 수정 완료' : '문장 전송 🚀'}
               </button>
+              {editingSentenceId && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ whiteSpace: 'nowrap', padding: '10px 16px', boxShadow: 'none', borderColor: '#333' }}
+                  onClick={() => {
+                    setEditingSentenceId(null);
+                    setInputText('');
+                    localStorage.removeItem(localStorageKey);
+                  }}
+                >
+                  ❌ 취소
+                </button>
+              )}
             </form>
             <p style={{ fontSize: '0.85rem', color: '#888', marginTop: '10px', textAlign: 'left' }}>
               💡 직접 손글씨를 적듯이 차근차근 문장을 입력해요. 붙여넣기는 금지되어 있어요.

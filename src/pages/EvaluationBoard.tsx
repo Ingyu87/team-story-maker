@@ -1,12 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { useGameStore } from '../store/useGameStore';
-import { Award, Home, MessageSquare } from 'lucide-react';
+import { Award, MessageSquare } from 'lucide-react';
 import type { Rubric, Sentence, Evaluation, Room } from '../types/game';
 
 export const EvaluationBoard: React.FC = () => {
   const { roomId, nickname } = useParams<{ roomId: string; nickname: string }>();
-  const navigate = useNavigate();
   const { 
     currentRoom, 
     projectRooms,
@@ -20,7 +19,20 @@ export const EvaluationBoard: React.FC = () => {
   const [selectedRoomIdForEval, setSelectedRoomIdForEval] = useState<string | null>(null);
   const [scores, setScores] = useState<{ [rubricId: string]: number }>({});
   const [comment, setComment] = useState('');
-  const [submittedRoomIds, setSubmittedRoomIds] = useState<{ [roomId: string]: boolean }>({});
+  const submittedRoomIds = useMemo(() => {
+    const submittedMap: { [roomId: string]: boolean } = {};
+    if (!nickname) return submittedMap;
+
+    projectRooms.forEach((rm: Room) => {
+      const evals = rm.evaluations?.[rm.id] || [];
+      const myEval = evals.find((e: Evaluation) => e.evaluatorNickname === nickname);
+      if (myEval) {
+        submittedMap[rm.id] = true;
+      }
+    });
+
+    return submittedMap;
+  }, [projectRooms, nickname]);
 
   // 1. 현재 접속한 모둠방 실시간 구독
   useEffect(() => {
@@ -32,30 +44,14 @@ export const EvaluationBoard: React.FC = () => {
         unsubscribeRoom(roomId);
       }
     };
-  }, [roomId]);
+  }, [roomId, subscribeRoom, unsubscribeRoom]);
 
   // 2. 소속된 프로젝트(학급) 전체 모둠방 목록 로드
   useEffect(() => {
     if (currentRoom && currentRoom.teacherId && currentRoom.projectId) {
       loadRoomsByProject(currentRoom.teacherId, currentRoom.projectId);
     }
-  }, [currentRoom]);
-
-  // 3. 사용자가 각 방에 이미 제출한 동료 평가 내역 캐싱
-  useEffect(() => {
-    if (projectRooms && nickname) {
-      const submittedMap: { [roomId: string]: boolean } = {};
-      projectRooms.forEach((rm: Room) => {
-        // 해당 방의 evaluations 노드에서 내 닉네임이 있는지 확인
-        const evals = rm.evaluations?.[rm.id] || [];
-        const myEval = evals.find((e: Evaluation) => e.evaluatorNickname === nickname);
-        if (myEval) {
-          submittedMap[rm.id] = true;
-        }
-      });
-      setSubmittedRoomIds(submittedMap);
-    }
-  }, [projectRooms, nickname]);
+  }, [currentRoom, loadRoomsByProject]);
 
   // 평가 대상 방 선택 시 폼 초기화
   const handleSelectRoomForEval = (targetRoom: Room) => {
@@ -120,9 +116,6 @@ export const EvaluationBoard: React.FC = () => {
           </span>
           <h2 style={{ margin: '5px 0 0 0' }}>다른 모둠의 이야기를 읽고 서로 동료 평가를 해보아요!</h2>
         </div>
-        <button className="btn btn-secondary" onClick={() => navigate('/join')}>
-          <Home size={16} /> 로비로
-        </button>
       </div>
 
       <div style={{ display: 'flex', gap: '25px', flexWrap: 'wrap' }}>

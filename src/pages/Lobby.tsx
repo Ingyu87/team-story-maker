@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useGameStore } from '../store/useGameStore';
 import { BookOpen, User } from 'lucide-react';
@@ -6,27 +6,14 @@ import { BookOpen, User } from 'lucide-react';
 export const Lobby: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [roomId, setRoomId] = useState('');
-  const [nickname, setNickname] = useState('');
+  const [roomId, setRoomId] = useState(() => {
+    const codeParam = searchParams.get('code');
+    const savedRoomId = localStorage.getItem('relay-story-last-roomId');
+    return (codeParam || savedRoomId || '').toUpperCase();
+  });
+  const [nickname, setNickname] = useState(() => localStorage.getItem('relay-story-last-nickname') || '');
   const [errorMsg, setErrorMsg] = useState('');
   const { joinRoom, loading, error, setError } = useGameStore();
-
-  // URL 쿼리 파라미터 또는 로컬 스토리지에서 이전 입력 정보 가져와서 자동 설정
-  useEffect(() => {
-    const codeParam = searchParams.get('code');
-    if (codeParam) {
-      setRoomId(codeParam.toUpperCase());
-    } else {
-      const savedRoomId = localStorage.getItem('relay-story-last-roomId');
-      if (savedRoomId) {
-        setRoomId(savedRoomId.toUpperCase());
-      }
-    }
-    const savedNickname = localStorage.getItem('relay-story-last-nickname');
-    if (savedNickname) {
-      setNickname(savedNickname);
-    }
-  }, [searchParams]);
 
   const handleStudentJoin = async (e: React.FormEvent) => {
     e.preventDefault();

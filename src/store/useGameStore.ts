@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { db } from '../firebase';
-import { ref, set as dbSet, update as dbUpdate, onValue, off, get as dbGet, remove as dbRemove } from 'firebase/database';
+import { ref, set as dbSet, update as dbUpdate, onValue, off, get as dbGet, remove as dbRemove, runTransaction } from 'firebase/database';
 import type { DatabaseReference } from 'firebase/database';
-import type { Room, RoomStatus, LayoutMode, Sentence, Student, Rubric, Project, WarningLog } from '../types/game';
+import type { Room, RoomStatus, LayoutMode, Sentence, Student, Rubric, Project, WarningLog, Evaluation } from '../types/game';
 
 interface GameState {
   currentRoom: Room | null;
@@ -23,12 +23,15 @@ interface GameState {
     teacherId: string;
     projectId: string;
     turnMode: 'random' | 'sequence' | 'free';
+    writeUnit?: 'sentence' | 'paragraph';
   }) => Promise<string>;
   
   joinRoom: (roomId: string, nickname: string) => Promise<boolean>;
   leaveRoom: (roomId: string, nickname: string) => Promise<void>;
   startRoom: (roomId: string) => Promise<void>;
   submitSentence: (roomId: string, nickname: string, text: string) => Promise<void>;
+  updateSentenceText: (roomId: string, sentenceId: string, text: string) => Promise<void>;
+  deleteLastSentence: (roomId: string) => Promise<void>;
   skipTurn: (roomId: string) => Promise<void>;
   updateTypingStatus: (roomId: string, nickname: string, text: string, isTyping: boolean) => Promise<void>;
   submitEvaluation: (roomId: string, targetRoomId: string, evaluatorNickname: string, scores: { [key: string]: number }, comment?: string) => Promise<void>;
@@ -38,7 +41,7 @@ interface GameState {
   subscribeRoom: (roomId: string) => void;
   unsubscribeRoom: (roomId: string) => void;
   setError: (error: string | null) => void;
-
+ 
   // Project Actions (Folder Management)
   loadProjects: (teacherId: string) => Promise<void>;
   createProject: (teacherId: string, name: string, description?: string) => Promise<void>;
@@ -58,6 +61,7 @@ interface GameState {
       sentenceLimit: number;
       rubrics: Rubric[];
       turnMode: 'random' | 'sequence' | 'free';
+      writeUnit?: 'sentence' | 'paragraph';
     }
   ) => Promise<void>;
   subscribeRoomsByProject: (teacherId: string, projectId: string) => (() => void);
@@ -72,6 +76,22 @@ function generateRoomId(): string {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function normalizeRoom(roomData: Room): Room {
+  return {
+    ...roomData,
+    sentences: roomData.sentences || [],
+    studentOrder: roomData.studentOrder || [],
+    students: roomData.students || {},
+    typingStatus: roomData.typingStatus || {},
+    evaluations: roomData.evaluations || {},
+    warningLogs: roomData.warningLogs || [],
+  };
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -116,6 +136,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         teacherId: config.teacherId,
         projectId: config.projectId,
         turnMode: config.turnMode,
+        writeUnit: config.writeUnit || 'sentence',
       };
 
       // 1. 최상위 방 생성
@@ -127,8 +148,8 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       set({ loading: false });
       return roomId;
-    } catch (err: any) {
-      set({ error: err.message || '방 생성에 실패했습니다.', loading: false });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '방 생성에 실패했습니다.'), loading: false });
       throw err;
     }
   },
@@ -138,55 +159,58 @@ export const useGameStore = create<GameState>((set, get) => ({
     const formattedRoomId = roomId.toUpperCase();
     try {
       const roomRef = ref(db, `rooms/${formattedRoomId}`);
-      const snapshot = await dbGet(roomRef);
+      let failureMessage: string | null = null;
 
-      if (!snapshot.exists()) {
-        set({ error: '방을 찾을 수 없습니다.', loading: false });
-        return false;
-      }
+      const result = await runTransaction(roomRef, (currentData: Room | null) => {
+        if (!currentData) {
+          failureMessage = '방을 찾을 수 없습니다.';
+          return;
+        }
 
-      const roomData = snapshot.val() as Room;
+        const roomData = normalizeRoom(currentData);
 
-      if (roomData.status !== 'waiting') {
-        set({ error: '이미 글쓰기가 시작된 방입니다.', loading: false });
-        return false;
-      }
+        if (roomData.status !== 'waiting') {
+          failureMessage = '이미 글쓰기가 시작된 방입니다.';
+          return;
+        }
 
-      const currentStudents = roomData.students || {};
-      const studentKeys = Object.keys(currentStudents);
+        const studentKeys = Object.keys(roomData.students);
 
-      if (studentKeys.length >= roomData.maxStudents) {
-        set({ error: '정원이 가득 찬 방입니다.', loading: false });
-        return false;
-      }
+        if (studentKeys.length >= roomData.maxStudents) {
+          failureMessage = '정원이 가득 찬 방입니다.';
+          return;
+        }
 
-      if (currentStudents[nickname]) {
-        set({ error: '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.', loading: false });
-        return false;
-      }
+        if (roomData.students[nickname]) {
+          failureMessage = '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.';
+          return;
+        }
 
-      const newStudent: Student = {
-        nickname,
-        joinedAt: Date.now(),
-        isOnline: true,
-      };
+        const newStudent: Student = {
+          nickname,
+          joinedAt: Date.now(),
+          isOnline: true,
+        };
 
-      const updatedStudents = {
-        ...currentStudents,
-        [nickname]: newStudent,
-      };
-
-      const updatedOrder = [...(roomData.studentOrder || []), nickname];
-
-      await dbUpdate(roomRef, {
-        students: updatedStudents,
-        studentOrder: updatedOrder,
+        return {
+          ...roomData,
+          students: {
+            ...roomData.students,
+            [nickname]: newStudent,
+          },
+          studentOrder: [...roomData.studentOrder, nickname],
+        };
       });
+
+      if (!result.committed) {
+        set({ error: failureMessage || '방 입장에 실패했습니다.', loading: false });
+        return false;
+      }
 
       set({ loading: false });
       return true;
-    } catch (err: any) {
-      set({ error: err.message || '방 입장에 실패했습니다.', loading: false });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '방 입장에 실패했습니다.'), loading: false });
       return false;
     }
   },
@@ -241,12 +265,64 @@ export const useGameStore = create<GameState>((set, get) => ({
         studentOrder: finalOrder,
         currentTurnIndex: 0,
       });
-    } catch (err: any) {
-      set({ error: err.message || '시작에 실패했습니다.' });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '시작에 실패했습니다.') });
     }
   },
 
   submitSentence: async (roomId, nickname, text) => {
+    const formattedRoomId = roomId.toUpperCase();
+    try {
+      const roomRef = ref(db, `rooms/${formattedRoomId}`);
+      const newSentence: Sentence = {
+        id: `s-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        writer: nickname,
+        text,
+        timestamp: Date.now(),
+      };
+
+      await runTransaction(roomRef, (currentData: Room | null) => {
+        if (!currentData) return;
+
+        const room = normalizeRoom(currentData);
+        if (room.status !== 'writing') return room;
+
+        const order = room.studentOrder;
+        const currentTurnPlayer = order[room.currentTurnIndex];
+        const isMyTurn = room.turnMode === 'free' || currentTurnPlayer === nickname;
+        if (!isMyTurn) return room;
+
+        const updatedSentences = [...room.sentences, newSentence];
+        const typingStatus = {
+          ...room.typingStatus,
+          [nickname]: {
+            text: '',
+            isTyping: false,
+            updatedAt: Date.now(),
+          },
+        };
+
+        let nextStatus: RoomStatus = 'writing';
+        if (room.endCondition === 'limit' && updatedSentences.length >= room.sentenceLimit) {
+          nextStatus = 'evaluating';
+        }
+
+        const nextTurnIndex = order.length > 0 ? (room.currentTurnIndex + 1) % order.length : 0;
+
+        return {
+          ...room,
+          sentences: updatedSentences,
+          currentTurnIndex: nextTurnIndex,
+          status: nextStatus,
+          typingStatus,
+        };
+      });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '문장 전송에 실패했습니다.') });
+    }
+  },
+
+  updateSentenceText: async (roomId, sentenceId, text) => {
     const formattedRoomId = roomId.toUpperCase();
     try {
       const roomRef = ref(db, `rooms/${formattedRoomId}`);
@@ -255,41 +331,48 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       const room = snapshot.val() as Room;
       const sentences = room.sentences || [];
+      const updatedSentences = sentences.map((s) => 
+        s.id === sentenceId ? { ...s, text } : s
+      );
+
+      await dbUpdate(roomRef, {
+        sentences: updatedSentences
+      });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '문장 수정에 실패했습니다.') });
+    }
+  },
+
+  deleteLastSentence: async (roomId) => {
+    const formattedRoomId = roomId.toUpperCase();
+    try {
+      const roomRef = ref(db, `rooms/${formattedRoomId}`);
+      const snapshot = await dbGet(roomRef);
+      if (!snapshot.exists()) return;
+
+      const room = snapshot.val() as Room;
+      const sentences = room.sentences || [];
+      if (sentences.length === 0) return;
+
+      const updatedSentences = sentences.slice(0, -1);
       const order = room.studentOrder || [];
-
-      const newSentence: Sentence = {
-        id: `s-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        writer: nickname,
-        text,
-        timestamp: Date.now(),
-      };
       
-      const updatedSentences = [...sentences, newSentence];
+      // 턴을 이전 사람으로 돌림
+      const prevTurnIndex = (room.currentTurnIndex - 1 + order.length) % order.length;
 
-      const typingStatus = room.typingStatus || {};
-      if (typingStatus[nickname]) {
-        typingStatus[nickname] = {
-          text: '',
-          isTyping: false,
-          updatedAt: Date.now(),
-        };
+      // 만약 평가 대기중으로 상태가 바뀌었었다면 다시 writing 상태로 돌려놓음
+      let nextStatus = room.status;
+      if (room.status === 'evaluating') {
+        nextStatus = 'writing';
       }
-
-      let nextStatus: RoomStatus = 'writing';
-      if (room.endCondition === 'limit' && updatedSentences.length >= room.sentenceLimit) {
-        nextStatus = 'evaluating';
-      }
-
-      const nextTurnIndex = (room.currentTurnIndex + 1) % order.length;
 
       await dbUpdate(roomRef, {
         sentences: updatedSentences,
-        currentTurnIndex: nextTurnIndex,
-        status: nextStatus,
-        typingStatus,
+        currentTurnIndex: prevTurnIndex,
+        status: nextStatus
       });
-    } catch (err: any) {
-      set({ error: err.message || '문장 전송에 실패했습니다.' });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '문장 삭제에 실패했습니다.') });
     }
   },
 
@@ -309,8 +392,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       await dbUpdate(roomRef, {
         currentTurnIndex: nextTurnIndex,
       });
-    } catch (err: any) {
-      set({ error: err.message || '차례 넘기기에 실패했습니다.' });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '차례 넘기기에 실패했습니다.') });
     }
   },
 
@@ -333,26 +416,26 @@ export const useGameStore = create<GameState>((set, get) => ({
     const formattedTargetRoomId = targetRoomId.toUpperCase();
     try {
       const evaluationsRef = ref(db, `rooms/${formattedRoomId}/evaluations/${formattedTargetRoomId}`);
-      const snapshot = await dbGet(evaluationsRef);
-      const currentEvaluations: any[] = snapshot.exists() ? snapshot.val() : [];
-
-      const newEval = {
+      const newEval: Evaluation = {
         evaluatorNickname,
         scores,
         comment: comment || '',
       };
 
-      const existingIdx = currentEvaluations.findIndex(e => e.evaluatorNickname === evaluatorNickname);
-      let updatedEvaluations = [...currentEvaluations];
-      if (existingIdx > -1) {
-        updatedEvaluations[existingIdx] = newEval;
-      } else {
-        updatedEvaluations.push(newEval);
-      }
+      await runTransaction(evaluationsRef, (currentData: Evaluation[] | null) => {
+        const currentEvaluations = Array.isArray(currentData) ? currentData : [];
+        const existingIdx = currentEvaluations.findIndex(e => e.evaluatorNickname === evaluatorNickname);
+        const updatedEvaluations = [...currentEvaluations];
+        if (existingIdx > -1) {
+          updatedEvaluations[existingIdx] = newEval;
+        } else {
+          updatedEvaluations.push(newEval);
+        }
 
-      await dbSet(evaluationsRef, updatedEvaluations);
-    } catch (err: any) {
-      set({ error: err.message || '동료 평가 등록에 실패했습니다.' });
+        return updatedEvaluations;
+      });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '동료 평가 등록에 실패했습니다.') });
     }
   },
 
@@ -364,8 +447,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         scores,
         comment: comment || '',
       });
-    } catch (err: any) {
-      set({ error: err.message || '교사 평가 등록에 실패했습니다.' });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '교사 평가 등록에 실패했습니다.') });
     }
   },
 
@@ -375,8 +458,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       await dbUpdate(ref(db, `rooms/${formattedRoomId}`), {
         status: 'completed',
       });
-    } catch (err: any) {
-      set({ error: err.message || '방 완료 전환에 실패했습니다.' });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '방 완료 전환에 실패했습니다.') });
     }
   },
 
@@ -393,12 +476,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     onValue(roomRef, (snapshot) => {
       if (snapshot.exists()) {
-        const roomData = snapshot.val() as Room;
-        if (!roomData.sentences) roomData.sentences = [];
-        if (!roomData.studentOrder) roomData.studentOrder = [];
-        if (!roomData.students) roomData.students = {};
-        if (!roomData.typingStatus) roomData.typingStatus = {};
-        if (!roomData.evaluations) roomData.evaluations = {};
+        const roomData = normalizeRoom(snapshot.val() as Room);
 
         set({ currentRoom: roomData, error: null });
       } else {
@@ -423,19 +501,19 @@ export const useGameStore = create<GameState>((set, get) => ({
       const projectsRef = ref(db, `teachers/${teacherId}/projects`);
       const snapshot = await dbGet(projectsRef);
       if (snapshot.exists()) {
-        const data = snapshot.val();
-        const projectList: Project[] = Object.entries(data).map(([id, val]: [string, any]) => ({
+        const data = snapshot.val() as Record<string, Partial<Project>>;
+        const projectList: Project[] = Object.entries(data).map(([id, val]) => ({
           id,
-          name: val.name,
+          name: val.name || '이름 없는 프로젝트',
           description: val.description,
-          createdAt: val.createdAt,
+          createdAt: val.createdAt || 0,
         }));
         set({ projects: projectList, loading: false });
       } else {
         set({ projects: [], loading: false });
       }
-    } catch (err: any) {
-      set({ error: err.message || '프로젝트 폴더를 불러오는데 실패했습니다.', loading: false });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '프로젝트 폴더를 불러오는데 실패했습니다.'), loading: false });
     }
   },
 
@@ -453,8 +531,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       
       // 프로젝트 목록 새로고침
       await get().loadProjects(teacherId);
-    } catch (err: any) {
-      set({ error: err.message || '프로젝트 폴더 생성 실패.', loading: false });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '프로젝트 폴더 생성 실패.'), loading: false });
       throw err;
     }
   },
@@ -467,7 +545,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const snapshot = await dbGet(projectRef);
       
       if (snapshot.exists()) {
-        const val = snapshot.val();
+        const val = snapshot.val() as { roomIds?: Record<string, true> };
         const roomIds = val.roomIds ? Object.keys(val.roomIds) : [];
         
         // 연쇄 삭제: 각 룸 데이터 삭제
@@ -481,8 +559,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       
       // 목록 새로고침
       await get().loadProjects(teacherId);
-    } catch (err: any) {
-      set({ error: err.message || '프로젝트 삭제 실패.', loading: false });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '프로젝트 삭제 실패.'), loading: false });
     }
   },
 
@@ -508,8 +586,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       } else {
         set({ projectRooms: [], loading: false });
       }
-    } catch (err: any) {
-      set({ error: err.message || '방 목록 로드 실패.', loading: false });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '방 목록 로드 실패.'), loading: false });
     }
   },
 
@@ -517,11 +595,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     const formattedRoomId = roomId.toUpperCase();
     try {
       const roomRef = ref(db, `rooms/${formattedRoomId}`);
-      const snapshot = await dbGet(roomRef);
-      if (!snapshot.exists()) return;
-
-      const room = snapshot.val() as Room;
-      const warningLogs = room.warningLogs || [];
       const newWarning: WarningLog = {
         id: `w-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         nickname,
@@ -529,9 +602,14 @@ export const useGameStore = create<GameState>((set, get) => ({
         reason,
         timestamp: Date.now()
       };
-      const updatedLogs = [...warningLogs, newWarning];
-      await dbUpdate(roomRef, {
-        warningLogs: updatedLogs
+
+      await runTransaction(roomRef, (currentData: Room | null) => {
+        if (!currentData) return;
+        const room = normalizeRoom(currentData);
+        return {
+          ...room,
+          warningLogs: [...(room.warningLogs || []), newWarning],
+        };
       });
     } catch (err) {
       console.error('Warning logging failed:', err);
@@ -564,13 +642,14 @@ export const useGameStore = create<GameState>((set, get) => ({
             endCondition: config.endCondition,
             sentenceLimit: config.sentenceLimit,
             rubrics: config.rubrics,
-            turnMode: config.turnMode
+            turnMode: config.turnMode,
+            writeUnit: config.writeUnit || 'sentence'
           });
         }
       }
       set({ loading: false });
-    } catch (err: any) {
-      set({ error: err.message || '설정 수정에 실패했습니다.', loading: false });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '설정 수정에 실패했습니다.'), loading: false });
       throw err;
     }
   },
@@ -616,11 +695,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           const roomRef = ref(db, `rooms/${rId}`);
           const unsubscribeRoom = onValue(roomRef, (roomSnap) => {
             if (roomSnap.exists()) {
-              const rData = roomSnap.val() as Room;
-              if (!rData.sentences) rData.sentences = [];
-              if (!rData.studentOrder) rData.studentOrder = [];
-              if (!rData.students) rData.students = {};
-              if (!rData.warningLogs) rData.warningLogs = [];
+              const rData = normalizeRoom(roomSnap.val() as Room);
               roomDataMap[rId] = rData;
             } else {
               delete roomDataMap[rId];

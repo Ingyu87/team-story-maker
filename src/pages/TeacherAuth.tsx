@@ -30,7 +30,7 @@ export const TeacherAuth: React.FC = () => {
       } else {
         await logIn(email.trim(), password.trim());
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       // 에러는 스토어에 세팅되므로 로컬에 뿌림
       console.error(err);
     }

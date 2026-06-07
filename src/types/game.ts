@@ -56,6 +56,7 @@ export interface Room {
   projectId?: string; // 소속된 프로젝트 폴더 ID
   warningLogs?: WarningLog[]; // AI 필터링에 걸린 경고 기록들
   turnMode?: 'random' | 'sequence' | 'free'; // 글쓰기 순서 방식
+  writeUnit?: 'sentence' | 'paragraph'; // 글쓰기 단위 (문장 vs 문단)
 }
 
 export interface WarningLog {

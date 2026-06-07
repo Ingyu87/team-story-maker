@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useGameStore } from '../store/useGameStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { TeacherAuth } from './TeacherAuth';
 import type { LayoutMode, Rubric, Room } from '../types/game';
 import { 
-  Play, 
   SkipForward, 
   Users, 
   Plus, 
@@ -18,10 +17,12 @@ import {
   CheckCircle2, 
   Eye 
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export const TeacherDashboard: React.FC = () => {
-  const navigate = useNavigate();
   
   // Auth Store
   const { user, loading: authLoading, initializeAuth, logOut } = useAuthStore();
@@ -65,6 +66,7 @@ export const TeacherDashboard: React.FC = () => {
   const [endCondition, setEndCondition] = useState<'limit' | 'free'>('limit');
   const [sentenceLimit, setSentenceLimit] = useState(10);
   const [turnMode, setTurnMode] = useState<'random' | 'sequence' | 'free'>('random');
+  const [writeUnit, setWriteUnit] = useState<'sentence' | 'paragraph'>('sentence');
   const [rubrics, setRubrics] = useState<Rubric[]>([
     { id: 'r1', name: '창의성 (재미있는 상상력)', maxScore: 5 },
     { id: 'r2', name: '협동성 (앞 문장과 이어지는 내용)', maxScore: 5 },
@@ -74,6 +76,14 @@ export const TeacherDashboard: React.FC = () => {
 
   // 교사 평가 Form State
   const [evalScores, setEvalScores] = useState<{ [rubricId: string]: number }>({});
+  const defaultEvalScores = useMemo(() => {
+    const initialScores: { [key: string]: number } = {};
+    currentRoom?.rubrics.forEach(r => {
+      initialScores[r.id] = 5;
+    });
+    return initialScores;
+  }, [currentRoom?.rubrics]);
+  const effectiveEvalScores = Object.keys(evalScores).length > 0 ? evalScores : defaultEvalScores;
   const [evalComment, setEvalComment] = useState('');
 
   // 아카이브 뷰어 상태
@@ -87,14 +97,14 @@ export const TeacherDashboard: React.FC = () => {
   useEffect(() => {
     const unsubscribe = initializeAuth();
     return () => unsubscribe();
-  }, []);
+  }, [initializeAuth]);
 
   // 2. 로그인 시 프로젝트 로드
   useEffect(() => {
     if (user) {
       loadProjects(user.uid);
     }
-  }, [user]);
+  }, [user, loadProjects]);
 
   // 3. 프로젝트 선택 시 해당 프로젝트의 방 목록 실시간 구독
   useEffect(() => {
@@ -102,7 +112,7 @@ export const TeacherDashboard: React.FC = () => {
       const unsubscribe = subscribeRoomsByProject(user.uid, selectedProjectId);
       return () => unsubscribe();
     }
-  }, [selectedProjectId]);
+  }, [user, selectedProjectId, subscribeRoomsByProject]);
 
   // 4. 이야기방 실시간 구독 동기화
   useEffect(() => {
@@ -114,18 +124,7 @@ export const TeacherDashboard: React.FC = () => {
         unsubscribeRoom(activeRoomId);
       }
     };
-  }, [activeRoomId]);
-
-  // 평가 기본값 세팅
-  useEffect(() => {
-    if (currentRoom && rubrics.length > 0) {
-      const initialScores: { [key: string]: number } = {};
-      currentRoom.rubrics.forEach(r => {
-        initialScores[r.id] = 5;
-      });
-      setEvalScores(initialScores);
-    }
-  }, [currentRoom?.status]);
+  }, [activeRoomId, subscribeRoom, unsubscribeRoom]);
 
   // 프로젝트 생성 처리
   const handleCreateProjectSubmit = async (e: React.FormEvent) => {
@@ -171,6 +170,7 @@ export const TeacherDashboard: React.FC = () => {
           teacherId: user.uid,
           projectId: selectedProjectId,
           turnMode: turnMode || 'random',
+          writeUnit,
         });
       }
       setShowCreateRoomForm(false);
@@ -200,7 +200,7 @@ export const TeacherDashboard: React.FC = () => {
     e.preventDefault();
     if (!activeRoomId || !user || !selectedProjectId) return;
 
-    await submitTeacherEvaluation(activeRoomId, evalScores, evalComment);
+    await submitTeacherEvaluation(activeRoomId, effectiveEvalScores, evalComment);
     await completeRoom(activeRoomId);
     alert('모둠 평가가 완료되었습니다!');
   };
@@ -217,12 +217,13 @@ export const TeacherDashboard: React.FC = () => {
         endCondition,
         sentenceLimit,
         rubrics,
-        turnMode
+        turnMode,
+        writeUnit
       });
       setShowEditRoomForm(false);
       alert('이야기방 설정이 성공적으로 일괄 수정되었습니다! ⚙️');
-    } catch (err: any) {
-      alert(err.message || '설정 수정에 실패했습니다.');
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, '설정 수정에 실패했습니다.'));
     }
   };
 
@@ -257,8 +258,8 @@ export const TeacherDashboard: React.FC = () => {
         currentRoom.warningLogs || []
       );
       setAiReport(report);
-    } catch (err: any) {
-      alert(err.message || 'AI 분석 중 오류가 발생했습니다.');
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, 'AI 분석 중 오류가 발생했습니다.'));
     } finally {
       setIsAnalyzing(false);
     }
@@ -322,6 +323,13 @@ export const TeacherDashboard: React.FC = () => {
   const joinedStudents = currentRoom?.students ? Object.values(currentRoom.students) : [];
   const activeProject = projects.find((p) => p.id === selectedProjectId);
 
+  const studentWarningCounts: { [nickname: string]: number } = {};
+  if (currentRoom?.warningLogs) {
+    currentRoom.warningLogs.forEach((log) => {
+      studentWarningCounts[log.nickname] = (studentWarningCounts[log.nickname] || 0) + 1;
+    });
+  }
+
   return (
     <div className="app-container">
       
@@ -333,9 +341,6 @@ export const TeacherDashboard: React.FC = () => {
           </span>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '0.95rem' }} onClick={() => navigate('/join')}>
-            로비로 가기
-          </button>
           <button className="btn btn-accent" style={{ padding: '8px 16px', fontSize: '0.95rem', background: '#e53935' }} onClick={logOut}>
             <LogOut size={16} /> 로그아웃
           </button>
@@ -403,10 +408,25 @@ export const TeacherDashboard: React.FC = () => {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
                       {joinedStudents.map((st, idx) => (
                         <div key={st.nickname} className="student-tag" style={{ justifyContent: 'space-between', padding: '10px 16px', display: 'flex', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             <span style={{ fontStyle: 'italic', color: '#999', fontSize: '0.85rem' }}>{idx + 1}.</span>
                             <span className={st.isOnline ? 'student-online-dot' : 'student-offline-dot'} />
                             <strong>{st.nickname}</strong>
+                            {studentWarningCounts[st.nickname] > 0 && (
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                fontWeight: 'bold', 
+                                color: '#fff', 
+                                background: '#e53935', 
+                                padding: '1px 5px', 
+                                borderRadius: '4px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '2px'
+                              }}>
+                                ⚠️ 경고 {studentWarningCounts[st.nickname]}회
+                              </span>
+                            )}
                           </div>
                           <div style={{ display: 'flex', gap: '4px' }}>
                             <button 
@@ -434,38 +454,38 @@ export const TeacherDashboard: React.FC = () => {
                   ) : (
                     <div className="student-grid" style={{ marginBottom: '20px' }}>
                       {joinedStudents.map((st) => (
-                        <div key={st.nickname} className="student-tag">
+                        <div key={st.nickname} className="student-tag" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                           <span className={st.isOnline ? 'student-online-dot' : 'student-offline-dot'} />
-                          {st.nickname}
+                          <strong>{st.nickname}</strong>
+                          {studentWarningCounts[st.nickname] > 0 && (
+                            <span style={{ 
+                              fontSize: '0.75rem', 
+                              fontWeight: 'bold', 
+                              color: '#fff', 
+                              background: '#e53935', 
+                              padding: '1px 5px', 
+                              borderRadius: '4px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '2px'
+                            }}>
+                              ⚠️ {studentWarningCounts[st.nickname]}회
+                            </span>
+                          )}
                         </div>
                       ))}
                     </div>
                   )}
 
-                  {currentRoom.status === 'waiting' && (
-                    <button
-                      onClick={() => startRoom(currentRoom.id)}
-                      className="btn btn-primary"
-                      style={{ width: '100%', justifyContent: 'center' }}
-                    >
-                      <Play size={18} /> 글쓰기 활동 시작하기! 🎬
-                    </button>
-                  )}
-
-                  {joinedStudents.length > 0 && (
-                    <button 
-                      className="btn btn-secondary" 
-                      style={{ width: '100%', marginTop: '10px', background: '#ffebee', borderColor: '#ef9a9a', color: '#c62828', justifyContent: 'center' }}
-                      onClick={async () => {
-                        if (confirm("⚠️ 정말로 모든 참여 학생 목록을 비우고 대기 상태로 초기화하시겠습니까?")) {
-                          await useGameStore.getState().resetStudents(currentRoom.id);
-                          alert('학생 목록이 초기화되었습니다.');
-                        }
-                      }}
-                    >
-                      🔄 학생 목록 초기화 (대기방으로)
-                    </button>
-                  )}
+                  {/* AI 활동 분석 버튼 배치 */}
+                  <button 
+                    className={`btn btn-primary ${(!currentRoom.sentences || currentRoom.sentences.length === 0) ? 'btn-disabled' : ''}`}
+                    style={{ width: '100%', justifyContent: 'center', background: '#673ab7', marginTop: '10px' }}
+                    onClick={handleRunAIAnalysis}
+                    disabled={!currentRoom.sentences || currentRoom.sentences.length === 0}
+                  >
+                    🤖 AI 모둠 활동 분석
+                  </button>
                 </div>
               )}
 
@@ -518,13 +538,21 @@ export const TeacherDashboard: React.FC = () => {
                 <div>
                   <div className="note-container">
                     {currentRoom.sentences && currentRoom.sentences.length > 0 ? (
-                      currentRoom.sentences.map((sent) => (
-                        <span key={sent.id} className="note-sentence">
-                          {sent.text} <strong>({sent.writer})</strong>{' '}
-                        </span>
-                      ))
+                      currentRoom.writeUnit === 'paragraph' ? (
+                        currentRoom.sentences.map((sent) => (
+                          <p key={sent.id} style={{ margin: '0 0 10px 0', textIndent: '10px', fontSize: '1.05rem', lineHeight: '1.6' }}>
+                            {sent.text}
+                          </p>
+                        ))
+                      ) : (
+                        currentRoom.sentences.map((sent) => (
+                          <span key={sent.id} className="note-sentence" style={{ fontSize: '1.05rem', lineHeight: '1.6', marginRight: '6px' }}>
+                            {sent.text}
+                          </span>
+                        ))
+                      )
                     ) : (
-                      <span style={{ color: '#999' }}>첫 문장 작성 대기 중...</span>
+                      <span style={{ color: '#999' }}>첫 글 작성 대기 중...</span>
                     )}
 
                     {Object.entries(currentRoom.typingStatus || {}).map(([name, status]) => {
@@ -544,17 +572,10 @@ export const TeacherDashboard: React.FC = () => {
                     })}
                   </div>
 
-                  <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
-                    <button 
-                      className="btn btn-primary" 
-                      style={{ flex: '1', justifyContent: 'center', background: '#673ab7' }}
-                      onClick={handleRunAIAnalysis}
-                    >
-                      🤖 AI 모둠 글 분석하기
-                    </button>
+                  <div style={{ marginTop: '15px' }}>
                     <button 
                       className="btn btn-secondary" 
-                      style={{ flex: '1', justifyContent: 'center', background: '#fff3e0', borderColor: '#ffb74d', color: '#e65100' }}
+                      style={{ width: '100%', justifyContent: 'center', background: '#fff3e0', borderColor: '#ffb74d', color: '#e65100' }}
                       onClick={async () => {
                         if (confirm("⚠️ 정말로 작성된 모든 문장과 평가, 경고 내역을 비우고 처음부터 다시 시작하시겠습니까?")) {
                           await useGameStore.getState().resetActivity(currentRoom.id);
@@ -605,8 +626,8 @@ export const TeacherDashboard: React.FC = () => {
                         {[1, 2, 3, 4, 5].map((num) => (
                           <span
                             key={num}
-                            className={(evalScores[rubric.id] || 0) >= num ? 'active' : ''}
-                            onClick={() => setEvalScores({ ...evalScores, [rubric.id]: num })}
+                            className={(effectiveEvalScores[rubric.id] || 0) >= num ? 'active' : ''}
+                            onClick={() => setEvalScores({ ...effectiveEvalScores, [rubric.id]: num })}
                           >
                             ★
                           </span>
@@ -711,11 +732,23 @@ export const TeacherDashboard: React.FC = () => {
                           <select
                             className="select-field"
                             value={turnMode}
-                            onChange={(e) => setTurnMode(e.target.value as any)}
+                            onChange={(e) => setTurnMode(e.target.value as 'random' | 'sequence' | 'free')}
                           >
                             <option value="random">🎲 랜덤 순서 (시작 시 자동 섞임)</option>
                             <option value="sequence">📋 지정/입장 순서 (교사 지정 가능)</option>
                             <option value="free">자유롭게 쓰기 (순서 제약 없음)</option>
+                          </select>
+                        </div>
+
+                        <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
+                          <label className="input-label">글쓰기 작성 단위</label>
+                          <select
+                            className="select-field"
+                            value={writeUnit}
+                            onChange={(e) => setWriteUnit(e.target.value as 'sentence' | 'paragraph')}
+                          >
+                            <option value="sentence">🔤 문장 단위로 작성 (최대 100자)</option>
+                            <option value="paragraph">📄 문단 단위로 작성 (최대 500자)</option>
                           </select>
                         </div>
                       </div>
@@ -807,6 +840,7 @@ export const TeacherDashboard: React.FC = () => {
                           setSentenceLimit(firstRoom.sentenceLimit || 10);
                           setRubrics(firstRoom.rubrics || []);
                           setTurnMode(firstRoom.turnMode || 'random');
+                          setWriteUnit(firstRoom.writeUnit || 'sentence');
                         }
                         setShowEditRoomForm(!showEditRoomForm);
                       }}
@@ -850,11 +884,23 @@ export const TeacherDashboard: React.FC = () => {
                           <select
                             className="select-field"
                             value={turnMode}
-                            onChange={(e) => setTurnMode(e.target.value as any)}
+                            onChange={(e) => setTurnMode(e.target.value as 'random' | 'sequence' | 'free')}
                           >
                             <option value="random">🎲 랜덤 순서 (시작 시 자동 섞임)</option>
                             <option value="sequence">📋 지정/입장 순서 (교사 지정 가능)</option>
                             <option value="free">자유롭게 쓰기 (순서 제약 없음)</option>
+                          </select>
+                        </div>
+
+                        <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
+                          <label className="input-label">글쓰기 작성 단위</label>
+                          <select
+                            className="select-field"
+                            value={writeUnit}
+                            onChange={(e) => setWriteUnit(e.target.value as 'sentence' | 'paragraph')}
+                          >
+                            <option value="sentence">🔤 문장 단위로 작성 (최대 100자)</option>
+                            <option value="paragraph">📄 문단 단위로 작성 (최대 500자)</option>
                           </select>
                         </div>
                       </div>
@@ -942,11 +988,12 @@ export const TeacherDashboard: React.FC = () => {
                     const onlineCount = Object.values(room.students || {}).filter(s => s.isOnline).length;
                     const warningCount = room.warningLogs?.length || 0;
                     const hasSentences = room.sentences && room.sentences.length > 0;
+                    const students = room.students ? Object.values(room.students) : [];
 
                     return (
                       <div key={room.id} style={{ display: 'flex', flexDirection: 'column', padding: '20px', border: '2.5px solid #333', borderRadius: '15px', background: '#fff', boxShadow: '4px 4px 0 #333', gap: '12px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
-                          <div style={{ textAlign: 'left' }}>
+                          <div style={{ textAlign: 'left', flex: '1', minWidth: '280px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
                               <span style={{ 
                                 fontSize: '0.8rem', 
@@ -995,8 +1042,43 @@ export const TeacherDashboard: React.FC = () => {
                               순서: {room.turnMode === 'free' ? '자유' : room.turnMode === 'sequence' ? '지정' : '랜덤'} |{' '}
                               {room.sentences?.length || 0}개 문장 작성됨
                             </div>
+
+                            {/* 참여 학생 이름 목록 실시간 표시 */}
+                            <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#555' }}>참여 학생:</span>
+                              {students.length > 0 ? (
+                                students.map((st) => (
+                                  <span 
+                                    key={st.nickname} 
+                                    style={{ 
+                                      fontSize: '0.8rem', 
+                                      padding: '2px 8px', 
+                                      borderRadius: '6px', 
+                                      border: '1.5px solid #333',
+                                      background: st.isOnline ? '#e8f5e9' : '#f5f5f5',
+                                      color: st.isOnline ? '#2e7d32' : '#9e9e9e',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      fontWeight: '500'
+                                    }}
+                                  >
+                                    <span style={{ 
+                                      width: '6px', 
+                                      height: '6px', 
+                                      borderRadius: '50%', 
+                                      background: st.isOnline ? '#4caf50' : '#bdbdbd',
+                                      display: 'inline-block'
+                                    }} />
+                                    {st.nickname}
+                                  </span>
+                                ))
+                              ) : (
+                                <span style={{ fontSize: '0.8rem', color: '#999', fontStyle: 'italic' }}>대기 중인 학생 없음</span>
+                              )}
+                            </div>
                             
-                            <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                               <code style={{ fontSize: '0.85rem', background: '#eee', padding: '4px 8px', borderRadius: '5px' }}>
                                 {window.location.origin}/join?code={room.id}
                               </code>
@@ -1039,6 +1121,23 @@ export const TeacherDashboard: React.FC = () => {
                                   {expandedWarningRoomIds[room.id] ? '⚠️ 경고 접기 ▲' : '⚠️ 경고 기록 보기 ▼'}
                                 </button>
                               )}
+
+                              {joinedCount > 0 && room.status !== 'completed' && (
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none', background: '#ffebee', color: '#c62828', borderColor: '#ef9a9a' }}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (confirm(`⚠️ 정말로 [${room.title}]의 모든 참여 학생 목록을 비우고 대기 상태로 초기화하시겠습니까?`)) {
+                                      await useGameStore.getState().resetStudents(room.id);
+                                      alert('학생 목록이 초기화되었습니다.');
+                                    }
+                                  }}
+                                >
+                                  🔄 학생 초기화
+                                </button>
+                              )}
                             </div>
                           </div>
 
@@ -1068,13 +1167,21 @@ export const TeacherDashboard: React.FC = () => {
                         {expandedStoryRoomIds[room.id] && hasSentences && (
                           <div style={{ padding: '12px 18px', background: '#fffde7', border: '2px solid #333', borderRadius: '12px', textAlign: 'left' }}>
                             <p style={{ margin: 0, fontWeight: 'bold', fontSize: '0.95rem', color: '#555', marginBottom: '8px' }}>✍️ 현재 작성된 이야기 내용:</p>
-                            <div style={{ fontSize: '1.05rem', lineHeight: '1.6' }}>
-                              {room.sentences.map((s) => (
-                                <span key={s.id} style={{ marginRight: '6px' }}>
-                                  {s.text} <span style={{ fontSize: '0.8rem', color: '#666', background: '#eef2f3', padding: '2px 6px', borderRadius: '10px' }}>({s.writer})</span>
-                                </span>
-                              ))}
-                            </div>
+                            {room.writeUnit === 'paragraph' ? (
+                              room.sentences.map((s) => (
+                                <p key={s.id} style={{ margin: '0 0 10px 0', textIndent: '10px', fontSize: '1.05rem', lineHeight: '1.6' }}>
+                                  {s.text}
+                                </p>
+                              ))
+                            ) : (
+                              <div style={{ fontSize: '1.05rem', lineHeight: '1.6' }}>
+                                {room.sentences.map((s) => (
+                                  <span key={s.id} style={{ marginRight: '6px' }}>
+                                    {s.text}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         )}
 

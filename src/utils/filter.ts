@@ -1,11 +1,26 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-
 export interface FilterResult {
   isSafe: boolean;
   reason?: string; // 차단 사유 (예: 비속어 검출, 무의미한 텍스트 반복 등)
   suggestedText?: string; // 대안 텍스트 추천 (선택 사항)
+}
+
+async function requestGemini(task: 'filter' | 'analysis', prompt: string, jsonMode = false): Promise<string> {
+  const response = await fetch('/api/gemini', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task, prompt, jsonMode }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gemini API request failed: ${response.status}`);
+  }
+
+  const data = (await response.json()) as { text?: string };
+  if (!data.text) {
+    throw new Error('Gemini API returned an empty response.');
+  }
+
+  return data.text;
 }
 
 // 로컬 차단 욕설 및 비속어 목록
@@ -83,17 +98,7 @@ export async function filterSentence(text: string): Promise<FilterResult> {
     return localResult;
   }
 
-  // Gemini API 키가 없거나 플레이스홀더인 경우 로컬 검사만 적용
-  const isPlaceholder = !apiKey || apiKey === 'your_gemini_api_key_here';
-  if (isPlaceholder) {
-    console.warn("Gemini API Key is missing or placeholder. Running local filter only.");
-    return { isSafe: true };
-  }
-
   try {
-    const ai = new GoogleGenerativeAI(apiKey);
-    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
-
     const prompt = `
 당신은 초등학교 4학년 대상의 협동 글쓰기(이야기 릴레이) 수업을 지도하는 인공지능 교사 도우미입니다.
 학생이 제출한 문장에 대해 다음 사항을 평가하고 결과를 오직 **JSON 형식**으로만 응답해 주세요.
@@ -115,14 +120,7 @@ export async function filterSentence(text: string): Promise<FilterResult> {
 
 [JSON 응답]`;
 
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-      }
-    });
-
-    const responseText = result.response.text();
+    const responseText = await requestGemini('filter', prompt, true);
     const parsed: FilterResult = JSON.parse(responseText);
     return parsed;
   } catch (error) {
@@ -140,36 +138,7 @@ export async function analyzeStoryAI(
   students: string[],
   warningLogs?: { nickname: string; text: string; reason: string; timestamp: number }[]
 ): Promise<string> {
-  const isPlaceholder = !apiKey || apiKey === 'your_gemini_api_key_here';
-  
-  if (isPlaceholder) {
-    // API 키가 비어있거나 플레이스홀더인 경우 로컬 시뮬레이션 결과 제공
-    return `### 🤖 AI 모둠 활동 분석 보고서 (로컬 시뮬레이션)
-
-> [!NOTE]
-> 현재 Gemini API Key가 설정되지 않았거나 더미값 상태입니다. 실제 API 키를 등록하면 더 정확하고 생생한 분석 피드백이 실시간으로 제공됩니다.
-
-#### 🤝 1. 모둠 협동성 분석
-- **활동 참여도**: 참여 학생(${students.join(', ')})이 서로 순서를 존중하며 안정적으로 작성에 동참했습니다.
-- **문장 연결성**: 앞사람의 문장 흐름을 유지하며 글을 완성하고자 힘썼습니다.
-- **보완 제안**: 순서 대기 중에 친구의 글을 조금 더 집중해서 읽을 수 있도록 지도해 주세요.
-
-#### 💡 2. 소설의 창의성 및 이야기 흐름
-- **소재의 독창성**: 4학년 수준에서 접근하기 쉬운 흥미로운 소재를 활용했습니다.
-- **이야기 구조**: 처음(시작)-가운데(사건)-끝(결말)의 기본 흐름을 구성하려고 노력했습니다.
-
-#### 📝 3. 올바른 언어 사용 및 맞춤법 피드백
-- **비속어/장난 내역**: ${warningLogs && warningLogs.length > 0 ? `경고가 총 ${warningLogs.length}회 감지되었습니다. 욕설이나 반복적인 문체 사용에 대한 지도 편달이 필요합니다.` : '감지된 비속어나 장난 문장이 없어 매우 훌륭합니다.'}
-- **맞춤법 개선**: 띄어쓰기 및 마침표 사용 등 기본적인 국어 작문 습관을 한 번 더 보듬어 주시면 좋습니다.
-
-#### 👨‍🏫 4. 교사용 추천 종합 피드백
-- **피드백 제안**: "친구들의 생각을 잘 엮어서 멋진 릴레이 이야기를 완성해 냈네요! 모둠 친구들이 함께 상상력을 키우며 협동하는 모습이 참 아름답습니다. 다음에는 문장 간의 호응을 생각하며 더 풍부한 표현을 사용해 봅시다."`;
-  }
-
   try {
-    const ai = new GoogleGenerativeAI(apiKey);
-    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
-
     const storyText = sentences.map((s, idx) => `${idx + 1}. [${s.writer}] ${s.text}`).join('\n');
     const studentList = students.join(', ');
     const warningsText = warningLogs && warningLogs.length > 0 
@@ -209,10 +178,28 @@ ${warningsText}
 
 응답은 마크다운 문법으로 바로 렌더링할 수 있도록 작성해 주세요. (예: ##, 1., 2., *, bold 등 활용)`;
 
-    const result = await model.generateContent(prompt);
-    return result.response.text();
+    return await requestGemini('analysis', prompt);
   } catch (error) {
-    console.error("Gemini API Error in analysis:", error);
-    throw new Error("Gemini AI 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+    console.error("Gemini API Error in analysis, falling back to simulation:", error);
+    return `### 🤖 AI 모둠 활동 분석 보고서 (로컬 시뮬레이션 - API 오류 대체)
+
+> [!WARNING]
+> Gemini API 호출 중 오류가 발생하여(API 키 오류 또는 네트워크 문제), 로컬 시뮬레이션 분석 보고서로 대체 제공합니다.
+
+#### 🤝 1. 모둠 협동성 분석
+- **활동 참여도**: 참여 학생(${students.join(', ')})이 서로 순서를 존중하며 안정적으로 작성에 동참했습니다.
+- **문장 연결성**: 앞사람의 문장 흐름을 유지하며 글을 완성하고자 힘썼습니다.
+- **보완 제안**: 순서 대기 중에 친구의 글을 조금 더 집중해서 읽을 수 있도록 지도해 주세요.
+
+#### 💡 2. 소설의 창의성 및 이야기 흐름
+- **소재의 독창성**: 4학년 수준에서 접근하기 쉬운 흥미로운 소재를 활용했습니다.
+- **이야기 구조**: 처음(시작)-가운데(사건)-끝(결말)의 기본 흐름을 구성하려고 노력했습니다.
+
+#### 📝 3. 올바른 언어 사용 및 맞춤법 피드백
+- **비속어/장난 내역**: ${warningLogs && warningLogs.length > 0 ? `경고가 총 ${warningLogs.length}회 감지되었습니다. 욕설이나 반복적인 문체 사용에 대한 지도 편달이 필요합니다.` : '감지된 비속어나 장난 문장이 없어 매우 훌륭합니다.'}
+- **맞춤법 개선**: 띄어쓰기 및 마침표 사용 등 기본적인 국어 작문 습관을 한 번 더 보듬어 주시면 좋습니다.
+
+#### 👨‍🏫 4. 교사용 추천 종합 피드백
+- **피드백 제안**: "친구들의 생각을 잘 엮어서 멋진 릴레이 이야기를 완성해 냈네요! 모둠 친구들이 함께 상상력을 키우며 협동하는 모습이 참 아름답습니다. 다음에는 문장 간의 호응을 생각하며 더 풍부한 표현을 사용해 봅시다."`;
   }
 }
