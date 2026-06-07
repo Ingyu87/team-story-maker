@@ -15,6 +15,7 @@ export const StudentApp: React.FC = () => {
     submitSentence, 
     updateTypingStatus, 
     leaveRoom, 
+    finishWriting,
     setError 
   } = useGameStore();
 
@@ -147,9 +148,7 @@ export const StudentApp: React.FC = () => {
   const handleCompleteStory = async () => {
     if (!roomId) return;
     if (confirm('이야기가 완성되었나요? 글쓰기를 끝마치고 친구들의 이야기 평가 화면으로 넘어갑니다.')) {
-      const { ref, update } = await import('firebase/database');
-      const { db } = await import('../firebase');
-      await update(ref(db, `rooms/${roomId.toUpperCase()}`), { status: 'evaluating' });
+      await finishWriting(roomId);
     }
   };
 

@@ -38,6 +38,7 @@ interface GameState {
   submitEvaluation: (roomId: string, targetRoomId: string, evaluatorNickname: string, scores: { [key: string]: number }, comment?: string) => Promise<void>;
   submitTeacherEvaluation: (roomId: string, scores: { [key: string]: number }, comment?: string) => Promise<void>;
   completeRoom: (roomId: string) => Promise<void>;
+  finishWriting: (roomId: string) => Promise<void>;
   
   subscribeRoom: (roomId: string) => void;
   unsubscribeRoom: (roomId: string) => void;
@@ -144,12 +145,10 @@ export const useGameStore = create<GameState>((set, get) => ({
         writeUnit: config.writeUnit || 'sentence',
       };
 
-      // 1. 최상위 방 생성
-      await dbSet(roomRef, newRoom);
-
-      // 2. 프로젝트 하위에 방 매핑 기록
-      const mappingRef = ref(db, `teachers/${config.teacherId}/projects/${config.projectId}/roomIds/${roomId}`);
-      await dbSet(mappingRef, true);
+      await dbUpdate(ref(db), {
+        [`rooms/${roomId}`]: newRoom,
+        [`teachers/${config.teacherId}/projects/${config.projectId}/roomIds/${roomId}`]: true,
+      });
 
       set({ loading: false });
       return roomId;
@@ -164,45 +163,52 @@ export const useGameStore = create<GameState>((set, get) => ({
     const formattedRoomId = roomId.toUpperCase();
     try {
       const roomRef = ref(db, `rooms/${formattedRoomId}`);
-      const existingSnapshot = await dbGet(roomRef);
+      let joinError = '';
 
-      if (!existingSnapshot.exists()) {
-        set({ error: missingRoomMessage(formattedRoomId), loading: false });
-        return false;
-      }
+      const result = await runTransaction(roomRef, (currentData: Room | null) => {
+        if (!currentData) {
+          joinError = missingRoomMessage(formattedRoomId);
+          return;
+        }
 
-      const roomData = normalizeRoom(existingSnapshot.val() as Room);
+        const roomData = normalizeRoom(currentData);
+        if (roomData.status !== 'waiting') {
+          joinError = '이미 글쓰기가 시작된 방입니다.';
+          return;
+        }
 
-      if (roomData.status !== 'waiting') {
-        set({ error: '이미 글쓰기가 시작된 방입니다.', loading: false });
-        return false;
-      }
+        const studentKeys = Object.keys(roomData.students);
+        if (studentKeys.length >= roomData.maxStudents) {
+          joinError = '정원이 가득 찬 방입니다.';
+          return;
+        }
 
-      const studentKeys = Object.keys(roomData.students);
+        if (roomData.students[nickname]) {
+          joinError = '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.';
+          return;
+        }
 
-      if (studentKeys.length >= roomData.maxStudents) {
-        set({ error: '정원이 가득 찬 방입니다.', loading: false });
-        return false;
-      }
+        const newStudent: Student = {
+          nickname,
+          joinedAt: Date.now(),
+          isOnline: true,
+        };
 
-      if (roomData.students[nickname]) {
-        set({ error: '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.', loading: false });
-        return false;
-      }
-
-      const newStudent: Student = {
-        nickname,
-        joinedAt: Date.now(),
-        isOnline: true,
-      };
-
-      await dbUpdate(roomRef, {
-        students: {
-          ...roomData.students,
-          [nickname]: newStudent,
-        },
-        studentOrder: [...roomData.studentOrder, nickname],
+        joinError = '';
+        return {
+          ...roomData,
+          students: {
+            ...roomData.students,
+            [nickname]: newStudent,
+          },
+          studentOrder: [...roomData.studentOrder, nickname],
+        };
       });
+
+      if (!result.committed) {
+        set({ error: joinError || '방 입장에 실패했습니다. 다시 시도해 주세요.', loading: false });
+        return false;
+      }
 
       set({ loading: false });
       return true;
@@ -495,6 +501,24 @@ export const useGameStore = create<GameState>((set, get) => ({
       });
     } catch (err: unknown) {
       set({ error: getErrorMessage(err, '방 완료 전환에 실패했습니다.') });
+    }
+  },
+
+  finishWriting: async (roomId) => {
+    const formattedRoomId = roomId.toUpperCase();
+    try {
+      const roomRef = ref(db, `rooms/${formattedRoomId}`);
+      await runTransaction(roomRef, (currentData: Room | null) => {
+        if (!currentData) return;
+        const room = normalizeRoom(currentData);
+        if (room.status !== 'writing') return room;
+        return {
+          ...room,
+          status: 'evaluating',
+        };
+      });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '이야기 완성 전환에 실패했습니다.') });
     }
   },
 
