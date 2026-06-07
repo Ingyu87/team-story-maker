@@ -12,7 +12,10 @@ async function requestGemini(task: 'filter' | 'analysis', prompt: string, jsonMo
   });
 
   if (!response.ok) {
-    throw new Error(`Gemini API request failed: ${response.status}`);
+    const errorData = await response.json().catch(() => null) as { error?: string; detail?: string; models?: string[] } | null;
+    const detail = errorData?.detail ? ` ${errorData.detail}` : '';
+    const models = errorData?.models ? ` models=${errorData.models.join(',')}` : '';
+    throw new Error(`Gemini API request failed: ${response.status}.${detail}${models}`);
   }
 
   const data = (await response.json()) as { text?: string };

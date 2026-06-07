@@ -28,6 +28,7 @@ VITE_FIREBASE_APP_ID=
 VITE_FIREBASE_APPCHECK_SITE_KEY=
 
 GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 `GEMINI_API_KEY`는 브라우저 번들에 포함되면 안 됩니다. `VITE_GEMINI_API_KEY`를 쓰지 말고, Vercel 환경 변수에 서버 전용으로 등록하세요.
