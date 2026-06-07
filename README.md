@@ -25,6 +25,7 @@ VITE_FIREBASE_PROJECT_ID=
 VITE_FIREBASE_STORAGE_BUCKET=
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
+VITE_FIREBASE_APPCHECK_SITE_KEY=
 
 GEMINI_API_KEY=
 ```
@@ -55,5 +56,6 @@ npm run build
 
 - Firebase Authentication에서 이메일/비밀번호 로그인을 켭니다.
 - Firebase Realtime Database 보안 규칙을 수업 운영 방식에 맞게 잠급니다.
+- Firebase App Check에서 Web 앱을 reCAPTCHA v3로 등록하고 `VITE_FIREBASE_APPCHECK_SITE_KEY`를 Vercel 환경 변수로 등록합니다.
 - Vercel에 `GEMINI_API_KEY`를 서버 환경 변수로 등록합니다.
 - 이전에 브라우저용 `VITE_GEMINI_API_KEY`를 배포한 적이 있다면 해당 Gemini 키를 폐기하고 새 키를 발급하세요.
