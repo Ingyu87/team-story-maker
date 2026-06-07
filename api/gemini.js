@@ -1,6 +1,6 @@
 const apiKey = process.env.GEMINI_API_KEY;
 const preferredModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-const fallbackModels = [preferredModel, 'gemini-2.0-flash', 'gemini-1.5-flash'].filter(
+const fallbackModels = [preferredModel, 'gemini-2.5-flash-lite', 'gemini-2.0-flash'].filter(
   (model, index, models) => models.indexOf(model) === index
 );
 
@@ -97,7 +97,7 @@ export default async function handler(request, response) {
     return;
   }
 
-  let lastError;
+  const modelErrors = [];
 
   for (const modelName of fallbackModels) {
     try {
@@ -105,14 +105,16 @@ export default async function handler(request, response) {
       sendJson(response, 200, { model: modelName, text });
       return;
     } catch (error) {
-      lastError = error;
+      const detail = error instanceof Error ? error.message : String(error);
+      modelErrors.push({ model: modelName, detail });
       console.error(`Gemini API error with ${modelName}:`, error);
     }
   }
 
   sendJson(response, 502, {
     error: 'Gemini request failed.',
-    detail: lastError instanceof Error ? lastError.message : String(lastError),
+    detail: modelErrors.map(({ model, detail }) => `${model}: ${detail}`).join(' | '),
     models: fallbackModels,
+    modelErrors,
   });
 }
