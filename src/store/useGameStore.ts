@@ -160,6 +160,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     try {
       const roomRef = ref(db, `rooms/${formattedRoomId}`);
       let failureMessage: string | null = null;
+      const existingSnapshot = await dbGet(roomRef);
+
+      if (!existingSnapshot.exists()) {
+        set({ error: '방을 찾을 수 없습니다.', loading: false });
+        return false;
+      }
 
       const result = await runTransaction(roomRef, (currentData: Room | null) => {
         if (!currentData) {
