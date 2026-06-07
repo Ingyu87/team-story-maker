@@ -15,7 +15,9 @@ import {
   FolderPlus, 
   LogOut, 
   CheckCircle2, 
-  Eye 
+  Eye,
+  Download,
+  Copy
 } from 'lucide-react';
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -248,6 +250,167 @@ export const TeacherDashboard: React.FC = () => {
       await removeStudent(activeRoomId, nickname);
       alert(`${nickname} 학생을 내보냈습니다.`);
     }
+  };
+
+  const getRoomStoryText = (room: Room) => {
+    if (!room.sentences || room.sentences.length === 0) return '';
+    return room.writeUnit === 'paragraph'
+      ? room.sentences.map((sentence) => sentence.text).join('\n\n')
+      : room.sentences.map((sentence) => sentence.text).join(' ');
+  };
+
+  const copyRoomStory = async (room: Room) => {
+    const storyText = getRoomStoryText(room);
+    if (!storyText) return;
+
+    await navigator.clipboard.writeText(storyText);
+    alert(`${room.title} 완성글이 복사되었습니다.`);
+  };
+
+  const downloadRoomActivityImage = (room: Room) => {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) return;
+
+    const width = 1400;
+    const padding = 70;
+    const contentWidth = width - padding * 2;
+    const lineHeight = 34;
+
+    const wrapText = (text: string, maxWidth: number, font: string) => {
+      context.font = font;
+      const lines: string[] = [];
+      let currentLine = '';
+
+      for (const char of text) {
+        const nextLine = currentLine + char;
+        if (context.measureText(nextLine).width > maxWidth && currentLine) {
+          lines.push(currentLine);
+          currentLine = char;
+        } else {
+          currentLine = nextLine;
+        }
+      }
+
+      if (currentLine) lines.push(currentLine);
+      return lines;
+    };
+
+    const drawLines = (
+      lines: string[],
+      x: number,
+      y: number,
+      font: string,
+      color = '#333',
+      height = lineHeight
+    ) => {
+      context.font = font;
+      context.fillStyle = color;
+      lines.forEach((line, index) => {
+        context.fillText(line, x, y + index * height);
+      });
+      return y + Math.max(lines.length, 1) * height;
+    };
+
+    const render = (height: number) => {
+      canvas.width = width;
+      canvas.height = height;
+
+      context.fillStyle = '#fffdf0';
+      context.fillRect(0, 0, width, height);
+
+      context.strokeStyle = '#333';
+      context.lineWidth = 8;
+      context.strokeRect(18, 18, width - 36, height - 36);
+
+      let y = 90;
+
+      context.fillStyle = '#ffd966';
+      context.beginPath();
+      context.arc(padding + 28, y - 16, 26, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = '#333';
+      context.lineWidth = 5;
+      context.stroke();
+
+      context.font = 'bold 42px Arial, sans-serif';
+      context.fillStyle = '#222';
+      context.fillText(room.title || '이야기 릴레이 활동', padding + 75, y);
+      y += 60;
+
+      context.font = '24px Arial, sans-serif';
+      context.fillStyle = '#555';
+      context.fillText(`방 코드: ${room.id}  |  상태: ${room.status}  |  저장일: ${new Date().toLocaleString()}`, padding, y);
+      y += 58;
+
+      const students = Object.keys(room.students || {});
+      const settings = [
+        `참여 학생: ${students.length > 0 ? students.join(', ') : '없음'}`,
+        `작성 방식: ${room.writeUnit === 'paragraph' ? '문단' : '문장'} / 순서: ${room.turnMode || 'random'} / 목표: ${room.endCondition === 'limit' ? `${room.sentenceLimit}개` : '자유'}`
+      ];
+      settings.forEach((text) => {
+        y = drawLines(wrapText(text, contentWidth, '24px Arial, sans-serif'), padding, y, '24px Arial, sans-serif', '#333', 34);
+      });
+      y += 34;
+
+      context.font = 'bold 30px Arial, sans-serif';
+      context.fillStyle = '#111';
+      context.fillText('작성 본문', padding, y);
+      y += 44;
+
+      if (room.sentences.length > 0) {
+        room.sentences.forEach((sentence, index) => {
+          const prefix = `${index + 1}. ${sentence.writer}: `;
+          const lines = wrapText(`${prefix}${sentence.text}`, contentWidth, '24px Arial, sans-serif');
+          y = drawLines(lines, padding, y, '24px Arial, sans-serif', '#222', 34) + 12;
+        });
+      } else {
+        y = drawLines(['작성된 문장이 없습니다.'], padding, y, '24px Arial, sans-serif', '#777', 34) + 12;
+      }
+
+      y += 22;
+      context.font = 'bold 30px Arial, sans-serif';
+      context.fillStyle = '#111';
+      context.fillText('경고 기록', padding, y);
+      y += 44;
+
+      if (room.warningLogs && room.warningLogs.length > 0) {
+        room.warningLogs.forEach((log, index) => {
+          const lines = wrapText(`${index + 1}. ${log.nickname}: "${log.text}" - ${log.reason}`, contentWidth, '23px Arial, sans-serif');
+          y = drawLines(lines, padding, y, '23px Arial, sans-serif', '#c62828', 32) + 10;
+        });
+      } else {
+        y = drawLines(['경고 기록 없음'], padding, y, '24px Arial, sans-serif', '#4caf50', 34) + 12;
+      }
+
+      if (room.teacherEvaluation) {
+        y += 22;
+        context.font = 'bold 30px Arial, sans-serif';
+        context.fillStyle = '#111';
+        context.fillText('교사 평가', padding, y);
+        y += 44;
+
+        room.rubrics.forEach((rubric) => {
+          const score = room.teacherEvaluation?.scores[rubric.id] ?? '-';
+          y = drawLines([`${rubric.name}: ${score} / 5`], padding, y, '24px Arial, sans-serif', '#333', 34);
+        });
+
+        if (room.teacherEvaluation.comment) {
+          y += 8;
+          y = drawLines(wrapText(`종합 의견: ${room.teacherEvaluation.comment}`, contentWidth, '24px Arial, sans-serif'), padding, y, '24px Arial, sans-serif', '#333', 34);
+        }
+      }
+
+      return y + 70;
+    };
+
+    const finalHeight = Math.max(render(2600), 900);
+    render(finalHeight);
+
+    const link = document.createElement('a');
+    link.download = `${room.title || room.id}-활동내용.png`.replace(/[\\/:*?"<>|]/g, '_');
+    link.href = canvas.toDataURL('image/png');
+    link.click();
   };
 
   // AI 모둠 활동 분석 결과 모달은 API 재활성화 시 다시 사용합니다.
@@ -540,7 +703,20 @@ export const TeacherDashboard: React.FC = () => {
 
               {currentRoom.status !== 'waiting' && (
                 <div>
-                  <div className="note-container">
+                  <div
+                    className="note-container"
+                    role={currentRoom.sentences.length > 0 ? 'button' : undefined}
+                    tabIndex={currentRoom.sentences.length > 0 ? 0 : undefined}
+                    title={currentRoom.sentences.length > 0 ? '클릭하면 작성된 글이 복사됩니다.' : undefined}
+                    style={{ cursor: currentRoom.sentences.length > 0 ? 'copy' : 'default' }}
+                    onClick={() => copyRoomStory(currentRoom)}
+                    onKeyDown={(e) => {
+                      if ((e.key === 'Enter' || e.key === ' ') && currentRoom.sentences.length > 0) {
+                        e.preventDefault();
+                        copyRoomStory(currentRoom);
+                      }
+                    }}
+                  >
                     {currentRoom.sentences && currentRoom.sentences.length > 0 ? (
                       currentRoom.writeUnit === 'paragraph' ? (
                         currentRoom.sentences.map((sent) => (
@@ -576,10 +752,19 @@ export const TeacherDashboard: React.FC = () => {
                     })}
                   </div>
 
-                  <div style={{ marginTop: '15px' }}>
+                  <div style={{ marginTop: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className={`btn btn-secondary ${(!currentRoom.sentences || currentRoom.sentences.length === 0) ? 'btn-disabled' : ''}`}
+                      style={{ flex: '1 1 180px', justifyContent: 'center', background: '#e8f5e9', borderColor: '#81c784', color: '#2e7d32' }}
+                      disabled={!currentRoom.sentences || currentRoom.sentences.length === 0}
+                      onClick={() => downloadRoomActivityImage(currentRoom)}
+                    >
+                      <Download size={18} /> 활동 이미지 저장
+                    </button>
                     <button 
                       className="btn btn-secondary" 
-                      style={{ width: '100%', justifyContent: 'center', background: '#fff3e0', borderColor: '#ffb74d', color: '#e65100' }}
+                      style={{ flex: '1 1 180px', justifyContent: 'center', background: '#fff3e0', borderColor: '#ffb74d', color: '#e65100' }}
                       onClick={async () => {
                         if (confirm("⚠️ 정말로 작성된 모든 문장과 평가, 경고 내역을 비우고 처음부터 다시 시작하시겠습니까?")) {
                           await useGameStore.getState().resetActivity(currentRoom.id);
@@ -1126,6 +1311,19 @@ export const TeacherDashboard: React.FC = () => {
                                 </button>
                               )}
 
+                              <button
+                                type="button"
+                                className={`btn btn-secondary ${!hasSentences ? 'btn-disabled' : ''}`}
+                                style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none', background: '#e8f5e9', color: '#2e7d32', borderColor: '#81c784' }}
+                                disabled={!hasSentences}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  downloadRoomActivityImage(room);
+                                }}
+                              >
+                                <Download size={14} /> 활동 이미지 저장
+                              </button>
+
                               {joinedCount > 0 && room.status !== 'completed' && (
                                 <button
                                   type="button"
@@ -1169,8 +1367,27 @@ export const TeacherDashboard: React.FC = () => {
 
                         {/* 완성글 아코디언 */}
                         {expandedStoryRoomIds[room.id] && hasSentences && (
-                          <div style={{ padding: '12px 18px', background: '#fffde7', border: '2px solid #333', borderRadius: '12px', textAlign: 'left' }}>
-                            <p style={{ margin: 0, fontWeight: 'bold', fontSize: '0.95rem', color: '#555', marginBottom: '8px' }}>✍️ 현재 작성된 이야기 내용:</p>
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            title="클릭하면 완성글이 복사됩니다."
+                            style={{ padding: '12px 18px', background: '#fffde7', border: '2px solid #333', borderRadius: '12px', textAlign: 'left', cursor: 'copy' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyRoomStory(room);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                copyRoomStory(room);
+                              }
+                            }}
+                          >
+                            <p style={{ margin: 0, fontWeight: 'bold', fontSize: '0.95rem', color: '#555', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              ✍️ 현재 작성된 이야기 내용:
+                              <Copy size={14} />
+                            </p>
                             {room.writeUnit === 'paragraph' ? (
                               room.sentences.map((s) => (
                                 <p key={s.id} style={{ margin: '0 0 10px 0', textIndent: '10px', fontSize: '1.05rem', lineHeight: '1.6' }}>
@@ -1318,7 +1535,20 @@ export const TeacherDashboard: React.FC = () => {
               방 코드: {viewingArchiveRoom.id} | 완성일시: {new Date(viewingArchiveRoom.createdAt).toLocaleString()}
             </p>
 
-            <div className="note-container" style={{ maxHeight: '250px', fontSize: '1.2rem', marginBottom: '20px' }}>
+            <div
+              className="note-container"
+              role={viewingArchiveRoom.sentences.length > 0 ? 'button' : undefined}
+              tabIndex={viewingArchiveRoom.sentences.length > 0 ? 0 : undefined}
+              title={viewingArchiveRoom.sentences.length > 0 ? '클릭하면 완성글이 복사됩니다.' : undefined}
+              style={{ maxHeight: '250px', fontSize: '1.2rem', marginBottom: '20px', cursor: viewingArchiveRoom.sentences.length > 0 ? 'copy' : 'default' }}
+              onClick={() => copyRoomStory(viewingArchiveRoom)}
+              onKeyDown={(e) => {
+                if ((e.key === 'Enter' || e.key === ' ') && viewingArchiveRoom.sentences.length > 0) {
+                  e.preventDefault();
+                  copyRoomStory(viewingArchiveRoom);
+                }
+              }}
+            >
               {viewingArchiveRoom.sentences && viewingArchiveRoom.sentences.length > 0
                 ? viewingArchiveRoom.sentences.map(s => s.text).join(' ')
                 : '기록된 글이 없습니다.'}
@@ -1356,7 +1586,10 @@ export const TeacherDashboard: React.FC = () => {
               )}
             </div>
 
-            <div style={{ textAlign: 'center', marginTop: '25px' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '25px', flexWrap: 'wrap' }}>
+              <button className="btn btn-primary" onClick={() => downloadRoomActivityImage(viewingArchiveRoom)}>
+                <Download size={18} /> 활동 이미지 저장
+              </button>
               <button className="btn btn-secondary" onClick={() => setViewingArchiveRoom(null)}>
                 닫기
               </button>
