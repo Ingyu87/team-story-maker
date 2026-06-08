@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { db, firebaseDiagnostics } from '../firebase';
+import { db, firebaseDiagnostics, ensureAppCheckReady } from '../firebase';
 import { ref, set as dbSet, update as dbUpdate, onValue, off, get as dbGet, remove as dbRemove, runTransaction } from 'firebase/database';
 import type { DatabaseReference } from 'firebase/database';
 import type { Room, RoomStatus, LayoutMode, Sentence, Student, Rubric, Project, WarningLog, Evaluation } from '../types/game';
@@ -84,6 +84,19 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function getFirebaseErrorCode(error: unknown): string | undefined {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const code = (error as { code: unknown }).code;
+    return typeof code === 'string' ? code : undefined;
+  }
+  return undefined;
+}
+
+function isFirebasePermissionDenied(error: unknown): boolean {
+  const code = getFirebaseErrorCode(error);
+  return code === 'PERMISSION_DENIED' || code === 'permission_denied';
+}
+
 function normalizeRoom(roomData: Room): Room {
   return {
     ...roomData,
@@ -97,7 +110,29 @@ function normalizeRoom(roomData: Room): Room {
 }
 
 function missingRoomMessage(roomId: string): string {
-  return `방을 찾을 수 없습니다. 입력한 코드: ${roomId} / 연결 DB: ${firebaseDiagnostics.databaseURL} / 프로젝트: ${firebaseDiagnostics.projectId}`;
+  const appCheckStatus = firebaseDiagnostics.appCheckConfigured
+    ? 'App Check: 설정됨'
+    : 'App Check: 사이트 키 미설정(재배포 필요)';
+
+  return [
+    `방을 찾을 수 없습니다. 입력한 코드: ${roomId}`,
+    `연결 DB: ${firebaseDiagnostics.databaseURL}`,
+    `프로젝트: ${firebaseDiagnostics.projectId}`,
+    appCheckStatus,
+    'Firebase 콘솔에 방이 있는데도 이 메시지가 나오면 Realtime Database 보안 규칙·App Check 도메인·Vercel 재배포를 확인하세요.',
+  ].join(' / ');
+}
+
+function appCheckTokenErrorMessage(): string {
+  return 'App Check 토큰을 받지 못했습니다. reCAPTCHA v3 사이트 키, Firebase App Check 앱 등록, reCAPTCHA 허용 도메인(현재 접속 주소), Vercel 재배포를 확인해 주세요.';
+}
+
+function roomAccessDeniedMessage(roomId: string): string {
+  const appCheckHint = firebaseDiagnostics.appCheckConfigured
+    ? 'App Check가 적용된 상태입니다. reCAPTCHA v3 사이트 키와 Firebase App Check 앱 등록 도메인을 확인해 주세요.'
+    : 'App Check가 Realtime Database에 적용되어 있는데, VITE_FIREBASE_APPCHECK_SITE_KEY 환경 변수가 없습니다. Vercel에 reCAPTCHA v3 사이트 키를 등록하고 재배포하거나, Firebase Console → App Check → Realtime Database에서 [적용 해제]를 눌러 주세요.';
+
+  return `방 정보에 접근할 수 없습니다. (코드: ${roomId}) ${appCheckHint}`;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -113,6 +148,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   createRoom: async (config) => {
     set({ loading: true, error: null });
     try {
+      await ensureAppCheckReady();
+
       let roomId = generateRoomId();
       let roomRef = ref(db, `rooms/${roomId}`);
       let snapshot = await dbGet(roomRef);
@@ -162,9 +199,50 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({ loading: true, error: null });
     const formattedRoomId = roomId.toUpperCase();
     try {
-      const roomRef = ref(db, `rooms/${formattedRoomId}`);
-      let joinError = '';
+      try {
+        await ensureAppCheckReady();
+      } catch (appCheckErr: unknown) {
+        set({ error: appCheckTokenErrorMessage(), loading: false });
+        return false;
+      }
 
+      const roomRef = ref(db, `rooms/${formattedRoomId}`);
+
+      let snapshot;
+      try {
+        snapshot = await dbGet(roomRef);
+      } catch (getErr: unknown) {
+        if (isFirebasePermissionDenied(getErr)) {
+          set({ error: roomAccessDeniedMessage(formattedRoomId), loading: false });
+          return false;
+        }
+        set({ error: getErrorMessage(getErr, '방 입장에 실패했습니다.'), loading: false });
+        return false;
+      }
+
+      if (!snapshot.exists()) {
+        set({ error: missingRoomMessage(formattedRoomId), loading: false });
+        return false;
+      }
+
+      const existingRoom = normalizeRoom(snapshot.val() as Room);
+      if (existingRoom.status !== 'waiting') {
+        set({ error: '이미 글쓰기가 시작된 방입니다.', loading: false });
+        return false;
+      }
+
+      const studentKeys = Object.keys(existingRoom.students);
+      if (studentKeys.length >= existingRoom.maxStudents) {
+        set({ error: '정원이 가득 찬 방입니다.', loading: false });
+        return false;
+      }
+
+      if (existingRoom.students[nickname]) {
+        set({ error: '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.', loading: false });
+        return false;
+      }
+
+      let joinError = '';
       const result = await runTransaction(roomRef, (currentData: Room | null) => {
         if (!currentData) {
           joinError = missingRoomMessage(formattedRoomId);
@@ -177,8 +255,8 @@ export const useGameStore = create<GameState>((set, get) => ({
           return;
         }
 
-        const studentKeys = Object.keys(roomData.students);
-        if (studentKeys.length >= roomData.maxStudents) {
+        const currentStudentKeys = Object.keys(roomData.students);
+        if (currentStudentKeys.length >= roomData.maxStudents) {
           joinError = '정원이 가득 찬 방입니다.';
           return;
         }
@@ -213,6 +291,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       set({ loading: false });
       return true;
     } catch (err: unknown) {
+      if (isFirebasePermissionDenied(err)) {
+        set({ error: roomAccessDeniedMessage(formattedRoomId), loading: false });
+        return false;
+      }
       set({ error: getErrorMessage(err, '방 입장에 실패했습니다.'), loading: false });
       return false;
     }

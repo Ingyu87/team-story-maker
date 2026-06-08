@@ -56,7 +56,13 @@ npm run build
 ## 배포 전 체크
 
 - Firebase Authentication에서 이메일/비밀번호 로그인을 켭니다.
-- Firebase Realtime Database 보안 규칙을 수업 운영 방식에 맞게 잠급니다.
-- Firebase App Check에서 Web 앱을 reCAPTCHA v3로 등록하고 `VITE_FIREBASE_APPCHECK_SITE_KEY`를 Vercel 환경 변수로 등록합니다.
+- Firebase Realtime Database 보안 규칙을 배포합니다. 학생은 로그인 없이 방에 입장하므로 `rooms` 경로는 읽기/쓰기가 허용되어야 합니다. 저장소 루트의 `database.rules.json` 내용을 Firebase Console → Realtime Database → 규칙에 붙여넣고 **게시**하세요.
+- Firebase App Check를 켤 경우, 아래 순서를 **반드시** 지킨 뒤 Realtime Database에 **적용(Enforce)** 하세요.
+  1. [Google reCAPTCHA](https://www.google.com/recaptcha/admin)에서 v3 키 생성 (도메인: `localhost`, Vercel 배포 도메인)
+  2. Firebase Console → App Check → 앱 등록 → **reCAPTCHA v3** → 위 **사이트 키** 입력
+  3. Vercel 환경 변수 `VITE_FIREBASE_APPCHECK_SITE_KEY`에 같은 사이트 키 등록 후 **재배포**
+  4. 입장/글쓰기가 정상 동작하는지 확인한 뒤 App Check → Realtime Database → **적용**
+  - 급한 수업 전에는 App Check **적용 해제**로 되돌릴 수 있습니다.
+  - 로컬 개발 시 App Check 적용 상태를 테스트하려면 `.env.local`에 `VITE_FIREBASE_APPCHECK_DEBUG=true`를 넣고, 브라우저 콘솔에 출력되는 디버그 토큰을 Firebase App Check → 디버그 토큰 관리에 등록하세요.
 - Vercel에 `GEMINI_API_KEY`를 서버 환경 변수로 등록합니다.
 - 이전에 브라우저용 `VITE_GEMINI_API_KEY`를 배포한 적이 있다면 해당 Gemini 키를 폐기하고 새 키를 발급하세요.
