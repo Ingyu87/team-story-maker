@@ -32,7 +32,7 @@ export interface Room {
   maxStudents: number;
   layoutMode: LayoutMode;
   endCondition: 'limit' | 'free';
-  sentenceLimit: number; // 문장 수 제한일 때 목표 수
+  sentenceLimit: number; // 작성 단위(문장/문단)별 목표 개수
   status: RoomStatus;
   rubrics: Rubric[];
   createdAt: number;

@@ -20,6 +20,9 @@ import {
   Copy
 } from 'lucide-react';
 
+const getWriteUnitLabel = (unit: 'sentence' | 'paragraph' = 'sentence') =>
+  unit === 'paragraph' ? '문단' : '문장';
+
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -346,7 +349,7 @@ export const TeacherDashboard: React.FC = () => {
       const students = Object.keys(room.students || {});
       const settings = [
         `참여 학생: ${students.length > 0 ? students.join(', ') : '없음'}`,
-        `작성 방식: ${room.writeUnit === 'paragraph' ? '문단' : '문장'} / 순서: ${room.turnMode || 'random'} / 목표: ${room.endCondition === 'limit' ? `${room.sentenceLimit}개` : '자유'}`
+        `작성 방식: ${getWriteUnitLabel(room.writeUnit)} / 순서: ${room.turnMode || 'random'} / 목표: ${room.endCondition === 'limit' ? `${room.sentenceLimit}${getWriteUnitLabel(room.writeUnit)}` : '자유'}`
       ];
       settings.forEach((text) => {
         y = drawLines(wrapText(text, contentWidth, '24px Arial, sans-serif'), padding, y, '24px Arial, sans-serif', '#333', 34);
@@ -517,7 +520,7 @@ export const TeacherDashboard: React.FC = () => {
               <h2 style={{ display: 'inline', margin: 0 }}>{currentRoom.title}</h2>
               <p style={{ color: '#666', marginTop: '5px' }}>
                 레이아웃: {currentRoom.layoutMode === 'chat' ? '💬 채팅' : currentRoom.layoutMode === 'note' ? '📝 줄글' : '📖 동화책'} |{' '}
-                종료 조건: {currentRoom.endCondition === 'limit' ? `${currentRoom.sentenceLimit}문장` : '자유 글쓰기'}
+                종료 조건: {currentRoom.endCondition === 'limit' ? `${currentRoom.sentenceLimit}${getWriteUnitLabel(currentRoom.writeUnit)}` : '자유 글쓰기'}
               </p>
             </div>
 
@@ -950,14 +953,14 @@ export const TeacherDashboard: React.FC = () => {
                             value={endCondition}
                             onChange={(e) => setEndCondition(e.target.value as 'limit' | 'free')}
                           >
-                            <option value="limit">📏 설정된 목표 문장 수 도달 시 종료</option>
+                            <option value="limit">📏 설정된 목표 {getWriteUnitLabel(writeUnit)} 수 도달 시 종료</option>
                             <option value="free">🔓 자유로운 글쓰기 (직접 완료 클릭)</option>
                           </select>
                         </div>
 
                         {endCondition === 'limit' && (
                           <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
-                            <label className="input-label">목표 문장 수</label>
+                            <label className="input-label">목표 {getWriteUnitLabel(writeUnit)} 수</label>
                             <input
                               type="number"
                               className="input-field"
@@ -1102,14 +1105,14 @@ export const TeacherDashboard: React.FC = () => {
                             value={endCondition}
                             onChange={(e) => setEndCondition(e.target.value as 'limit' | 'free')}
                           >
-                            <option value="limit">📏 설정된 목표 문장 수 도달 시 종료</option>
+                            <option value="limit">📏 설정된 목표 {getWriteUnitLabel(writeUnit)} 수 도달 시 종료</option>
                             <option value="free">🔓 자유로운 글쓰기 (직접 완료 클릭)</option>
                           </select>
                         </div>
 
                         {endCondition === 'limit' && (
                           <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
-                            <label className="input-label">목표 문장 수</label>
+                            <label className="input-label">목표 {getWriteUnitLabel(writeUnit)} 수</label>
                             <input
                               type="number"
                               className="input-field"
@@ -1229,7 +1232,7 @@ export const TeacherDashboard: React.FC = () => {
                             <div style={{ color: '#666', fontSize: '0.9rem', marginTop: '5px' }}>
                               테마: {room.layoutMode === 'chat' ? '💬 채팅' : room.layoutMode === 'note' ? '📝 줄글' : '📖 동화책'} |{' '}
                               순서: {room.turnMode === 'free' ? '자유' : room.turnMode === 'sequence' ? '지정' : '랜덤'} |{' '}
-                              {room.sentences?.length || 0}개 문장 작성됨
+                              {room.sentences?.length || 0}개 {getWriteUnitLabel(room.writeUnit)} 작성됨
                             </div>
 
                             {/* 참여 학생 이름 목록 실시간 표시 */}
