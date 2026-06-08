@@ -180,10 +180,11 @@ export const TeacherDashboard: React.FC = () => {
         });
       }
       setShowCreateRoomForm(false);
-      // 룸 리스트 새로고침
       await loadRoomsByProject(user.uid, selectedProjectId);
+      alert('이야기방이 개설되었습니다! 각 모둠의 방 코드를 확인하고 학생에게 공유하세요.');
     } catch (err) {
       console.error(err);
+      alert(getErrorMessage(err, '이야기방 생성에 실패했습니다. Firebase 설정을 확인하세요.'));
     }
   };
 

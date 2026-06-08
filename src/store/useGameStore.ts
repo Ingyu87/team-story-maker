@@ -102,37 +102,43 @@ function isFirebasePermissionDenied(error: unknown): boolean {
   return false;
 }
 
-async function fetchRoomData(roomId: string): Promise<{ room: Room | null; accessDenied: boolean }> {
+async function fetchRoomData(roomId: string): Promise<{
+  room: Room | null;
+  accessDenied: boolean;
+  availableRoomIds: string[] | null;
+}> {
   const roomRef = ref(db, `rooms/${roomId}`);
 
   try {
     const snapshot = await dbGet(roomRef);
     if (snapshot.exists()) {
-      return { room: normalizeRoom(snapshot.val() as Room), accessDenied: false };
+      return { room: normalizeRoom(snapshot.val() as Room), accessDenied: false, availableRoomIds: null };
     }
   } catch (err: unknown) {
     if (isFirebasePermissionDenied(err)) {
-      return { room: null, accessDenied: true };
+      return { room: null, accessDenied: true, availableRoomIds: null };
     }
     throw err;
   }
 
   try {
     const roomsSnapshot = await dbGet(ref(db, 'rooms'));
-    if (roomsSnapshot.exists()) {
-      const rooms = roomsSnapshot.val() as Record<string, Room>;
-      if (rooms[roomId]) {
-        return { room: normalizeRoom(rooms[roomId]), accessDenied: false };
-      }
+    if (!roomsSnapshot.exists()) {
+      return { room: null, accessDenied: false, availableRoomIds: [] };
     }
+
+    const rooms = roomsSnapshot.val() as Record<string, Room>;
+    const availableRoomIds = Object.keys(rooms);
+    if (rooms[roomId]) {
+      return { room: normalizeRoom(rooms[roomId]), accessDenied: false, availableRoomIds: null };
+    }
+    return { room: null, accessDenied: false, availableRoomIds };
   } catch (err: unknown) {
     if (isFirebasePermissionDenied(err)) {
-      return { room: null, accessDenied: true };
+      return { room: null, accessDenied: true, availableRoomIds: null };
     }
     throw err;
   }
-
-  return { room: null, accessDenied: false };
 }
 
 function normalizeRoom(roomData: Room): Room {
@@ -147,21 +153,28 @@ function normalizeRoom(roomData: Room): Room {
   };
 }
 
-function missingRoomMessage(roomId: string): string {
-  if (firebaseDiagnostics.appCheckConfigured) {
+function missingRoomMessage(roomId: string, availableRoomIds: string[] | null = null): string {
+  if (availableRoomIds && availableRoomIds.length > 0) {
     return [
-      `방 코드 ${roomId}를 불러오지 못했습니다.`,
-      'App Check는 정상입니다.',
-      'Firebase Console → Realtime Database → 규칙 탭에서 아래 rooms 읽기/쓰기 규칙을 붙여넣고 [게시]했는지 확인하세요.',
-      '루트에 ".read": false 가 있으면 rooms 규칙이 있어도 학생 입장이 막힙니다.',
+      `방 코드 ${roomId}가 DB에 없습니다.`,
+      `현재 읽을 수 있는 방: ${availableRoomIds.join(', ')}`,
+      '교사 대시보드에 표시된 코드와 정확히 같은지 확인하세요.',
+    ].join(' ');
+  }
+
+  if (availableRoomIds && availableRoomIds.length === 0) {
+    return [
+      `방 코드 ${roomId}가 DB에 없습니다.`,
+      `연결 DB(${firebaseDiagnostics.databaseURL})에 방이 하나도 없습니다.`,
+      '교사가 학생과 같은 배포 주소에서 이야기방을 개설했는지, Vercel의 VITE_FIREBASE_DATABASE_URL이 Firebase 콘솔과 같은지 확인하세요.',
     ].join(' ');
   }
 
   return [
-    `방을 찾을 수 없습니다. 입력한 코드: ${roomId}`,
+    `방 코드 ${roomId}를 불러오지 못했습니다.`,
     `연결 DB: ${firebaseDiagnostics.databaseURL}`,
-    'Vercel에 VITE_FIREBASE_APPCHECK_SITE_KEY 등록 후 재배포하거나 App Check [적용 해제]를 확인하세요.',
-  ].join(' / ');
+    'Firebase Console → Realtime Database → 데이터 탭에서 rooms 아래에 해당 코드가 있는지 확인하세요.',
+  ].join(' ');
 }
 
 function securityRulesMessage(roomId: string): string {
@@ -252,13 +265,13 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       let existingRoom: Room;
       try {
-        const { room, accessDenied } = await fetchRoomData(formattedRoomId);
+        const { room, accessDenied, availableRoomIds } = await fetchRoomData(formattedRoomId);
         if (accessDenied) {
           set({ error: securityRulesMessage(formattedRoomId), loading: false });
           return false;
         }
         if (!room) {
-          set({ error: missingRoomMessage(formattedRoomId), loading: false });
+          set({ error: missingRoomMessage(formattedRoomId, availableRoomIds), loading: false });
           return false;
         }
         existingRoom = room;
