@@ -93,8 +93,46 @@ function getFirebaseErrorCode(error: unknown): string | undefined {
 }
 
 function isFirebasePermissionDenied(error: unknown): boolean {
-  const code = getFirebaseErrorCode(error);
-  return code === 'PERMISSION_DENIED' || code === 'permission_denied';
+  const code = getFirebaseErrorCode(error)?.toLowerCase();
+  if (code === 'permission_denied' || code === 'permission-denied') return true;
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return msg.includes('permission denied') || msg.includes("client doesn't have permission");
+  }
+  return false;
+}
+
+async function fetchRoomData(roomId: string): Promise<{ room: Room | null; accessDenied: boolean }> {
+  const roomRef = ref(db, `rooms/${roomId}`);
+
+  try {
+    const snapshot = await dbGet(roomRef);
+    if (snapshot.exists()) {
+      return { room: normalizeRoom(snapshot.val() as Room), accessDenied: false };
+    }
+  } catch (err: unknown) {
+    if (isFirebasePermissionDenied(err)) {
+      return { room: null, accessDenied: true };
+    }
+    throw err;
+  }
+
+  try {
+    const roomsSnapshot = await dbGet(ref(db, 'rooms'));
+    if (roomsSnapshot.exists()) {
+      const rooms = roomsSnapshot.val() as Record<string, Room>;
+      if (rooms[roomId]) {
+        return { room: normalizeRoom(rooms[roomId]), accessDenied: false };
+      }
+    }
+  } catch (err: unknown) {
+    if (isFirebasePermissionDenied(err)) {
+      return { room: null, accessDenied: true };
+    }
+    throw err;
+  }
+
+  return { room: null, accessDenied: false };
 }
 
 function normalizeRoom(roomData: Room): Room {
@@ -110,29 +148,33 @@ function normalizeRoom(roomData: Room): Room {
 }
 
 function missingRoomMessage(roomId: string): string {
-  const appCheckStatus = firebaseDiagnostics.appCheckConfigured
-    ? 'App Check: 설정됨'
-    : 'App Check: 사이트 키 미설정(재배포 필요)';
+  if (firebaseDiagnostics.appCheckConfigured) {
+    return [
+      `방 코드 ${roomId}를 불러오지 못했습니다.`,
+      'App Check는 정상입니다.',
+      'Firebase Console → Realtime Database → 규칙 탭에서 아래 rooms 읽기/쓰기 규칙을 붙여넣고 [게시]했는지 확인하세요.',
+      '루트에 ".read": false 가 있으면 rooms 규칙이 있어도 학생 입장이 막힙니다.',
+    ].join(' ');
+  }
 
   return [
     `방을 찾을 수 없습니다. 입력한 코드: ${roomId}`,
     `연결 DB: ${firebaseDiagnostics.databaseURL}`,
-    `프로젝트: ${firebaseDiagnostics.projectId}`,
-    appCheckStatus,
-    'Firebase 콘솔에 방이 있는데도 이 메시지가 나오면 Realtime Database 보안 규칙·App Check 도메인·Vercel 재배포를 확인하세요.',
+    'Vercel에 VITE_FIREBASE_APPCHECK_SITE_KEY 등록 후 재배포하거나 App Check [적용 해제]를 확인하세요.',
   ].join(' / ');
+}
+
+function securityRulesMessage(roomId: string): string {
+  return [
+    `방 코드 ${roomId}에 접근할 수 없습니다.`,
+    'Realtime Database 보안 규칙이 학생(비로그인) 읽기를 막고 있습니다.',
+    'Firebase Console → Realtime Database → 규칙 → database.rules.json 내용 붙여넣기 → [게시].',
+    '급하면 App Check → Realtime Database → [적용 해제] 후 다시 시도하세요.',
+  ].join(' ');
 }
 
 function appCheckTokenErrorMessage(): string {
   return 'App Check 토큰을 받지 못했습니다. reCAPTCHA v3 사이트 키, Firebase App Check 앱 등록, reCAPTCHA 허용 도메인(현재 접속 주소), Vercel 재배포를 확인해 주세요.';
-}
-
-function roomAccessDeniedMessage(roomId: string): string {
-  const appCheckHint = firebaseDiagnostics.appCheckConfigured
-    ? 'App Check가 적용된 상태입니다. reCAPTCHA v3 사이트 키와 Firebase App Check 앱 등록 도메인을 확인해 주세요.'
-    : 'App Check가 Realtime Database에 적용되어 있는데, VITE_FIREBASE_APPCHECK_SITE_KEY 환경 변수가 없습니다. Vercel에 reCAPTCHA v3 사이트 키를 등록하고 재배포하거나, Firebase Console → App Check → Realtime Database에서 [적용 해제]를 눌러 주세요.';
-
-  return `방 정보에 접근할 수 없습니다. (코드: ${roomId}) ${appCheckHint}`;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -208,24 +250,27 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       const roomRef = ref(db, `rooms/${formattedRoomId}`);
 
-      let snapshot;
+      let existingRoom: Room;
       try {
-        snapshot = await dbGet(roomRef);
+        const { room, accessDenied } = await fetchRoomData(formattedRoomId);
+        if (accessDenied) {
+          set({ error: securityRulesMessage(formattedRoomId), loading: false });
+          return false;
+        }
+        if (!room) {
+          set({ error: missingRoomMessage(formattedRoomId), loading: false });
+          return false;
+        }
+        existingRoom = room;
       } catch (getErr: unknown) {
         if (isFirebasePermissionDenied(getErr)) {
-          set({ error: roomAccessDeniedMessage(formattedRoomId), loading: false });
+          set({ error: securityRulesMessage(formattedRoomId), loading: false });
           return false;
         }
         set({ error: getErrorMessage(getErr, '방 입장에 실패했습니다.'), loading: false });
         return false;
       }
 
-      if (!snapshot.exists()) {
-        set({ error: missingRoomMessage(formattedRoomId), loading: false });
-        return false;
-      }
-
-      const existingRoom = normalizeRoom(snapshot.val() as Room);
       if (existingRoom.status !== 'waiting') {
         set({ error: '이미 글쓰기가 시작된 방입니다.', loading: false });
         return false;
@@ -292,7 +337,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       return true;
     } catch (err: unknown) {
       if (isFirebasePermissionDenied(err)) {
-        set({ error: roomAccessDeniedMessage(formattedRoomId), loading: false });
+        set({ error: securityRulesMessage(formattedRoomId), loading: false });
         return false;
       }
       set({ error: getErrorMessage(err, '방 입장에 실패했습니다.'), loading: false });
