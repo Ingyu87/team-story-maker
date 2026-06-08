@@ -302,12 +302,10 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       let joinError = '';
       const result = await runTransaction(roomRef, (currentData: Room | null) => {
-        if (!currentData) {
-          joinError = missingRoomMessage(formattedRoomId);
-          return;
-        }
-
-        const roomData = normalizeRoom(currentData);
+        // RTDB transactions can call this once with null before the server value arrives.
+        // We already loaded and validated the room above, so use that snapshot as the
+        // initial transaction value instead of aborting a valid join.
+        const roomData = normalizeRoom(currentData || existingRoom);
         if (roomData.status !== 'waiting') {
           joinError = '이미 글쓰기가 시작된 방입니다.';
           return;
