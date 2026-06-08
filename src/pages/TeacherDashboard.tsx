@@ -23,6 +23,9 @@ import {
 const getWriteUnitLabel = (unit: 'sentence' | 'paragraph' = 'sentence') =>
   unit === 'paragraph' ? '문단' : '문장';
 
+const getWriteUnitLimitHint = (unit: 'sentence' | 'paragraph' = 'sentence') =>
+  unit === 'paragraph' ? '문단 개수 기준으로 종료됩니다.' : '문장 개수 기준으로 종료됩니다.';
+
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -954,14 +957,14 @@ export const TeacherDashboard: React.FC = () => {
                             value={endCondition}
                             onChange={(e) => setEndCondition(e.target.value as 'limit' | 'free')}
                           >
-                            <option value="limit">📏 설정된 목표 {getWriteUnitLabel(writeUnit)} 수 도달 시 종료</option>
+                            <option value="limit">📏 설정된 목표 작성 개수 도달 시 종료 ({getWriteUnitLabel(writeUnit)} 기준)</option>
                             <option value="free">🔓 자유로운 글쓰기 (직접 완료 클릭)</option>
                           </select>
                         </div>
 
                         {endCondition === 'limit' && (
                           <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
-                            <label className="input-label">목표 {getWriteUnitLabel(writeUnit)} 수</label>
+                            <label className="input-label">목표 작성 개수 ({getWriteUnitLabel(writeUnit)} 기준)</label>
                             <input
                               type="number"
                               className="input-field"
@@ -970,6 +973,9 @@ export const TeacherDashboard: React.FC = () => {
                               value={sentenceLimit}
                               onChange={(e) => setSentenceLimit(parseInt(e.target.value))}
                             />
+                            <div style={{ marginTop: '6px', color: '#666', fontSize: '0.85rem', fontWeight: 700 }}>
+                              {getWriteUnitLimitHint(writeUnit)}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -1106,14 +1112,14 @@ export const TeacherDashboard: React.FC = () => {
                             value={endCondition}
                             onChange={(e) => setEndCondition(e.target.value as 'limit' | 'free')}
                           >
-                            <option value="limit">📏 설정된 목표 {getWriteUnitLabel(writeUnit)} 수 도달 시 종료</option>
+                            <option value="limit">📏 설정된 목표 작성 개수 도달 시 종료 ({getWriteUnitLabel(writeUnit)} 기준)</option>
                             <option value="free">🔓 자유로운 글쓰기 (직접 완료 클릭)</option>
                           </select>
                         </div>
 
                         {endCondition === 'limit' && (
                           <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
-                            <label className="input-label">목표 {getWriteUnitLabel(writeUnit)} 수</label>
+                            <label className="input-label">목표 작성 개수 ({getWriteUnitLabel(writeUnit)} 기준)</label>
                             <input
                               type="number"
                               className="input-field"
@@ -1122,6 +1128,9 @@ export const TeacherDashboard: React.FC = () => {
                               value={sentenceLimit}
                               onChange={(e) => setSentenceLimit(parseInt(e.target.value))}
                             />
+                            <div style={{ marginTop: '6px', color: '#666', fontSize: '0.85rem', fontWeight: 700 }}>
+                              {getWriteUnitLimitHint(writeUnit)}
+                            </div>
                           </div>
                         )}
                       </div>
