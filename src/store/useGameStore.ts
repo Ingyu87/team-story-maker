@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { db, firebaseDiagnostics, ensureAppCheckReady } from '../firebase';
-import { ref, set as dbSet, update as dbUpdate, onValue, off, get as dbGet, remove as dbRemove, runTransaction } from 'firebase/database';
+import { ref, set as dbSet, update as dbUpdate, onValue, off, get as dbGet, remove as dbRemove, runTransaction, onDisconnect } from 'firebase/database';
 import type { DatabaseReference } from 'firebase/database';
 import type { Room, RoomStatus, LayoutMode, Sentence, Student, Rubric, Project, WarningLog, Evaluation } from '../types/game';
 
@@ -290,12 +290,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
 
       const studentKeys = Object.keys(existingRoom.students);
-      if (studentKeys.length >= existingRoom.maxStudents) {
+      if (!existingRoom.students[nickname] && studentKeys.length >= existingRoom.maxStudents) {
         set({ error: '정원이 가득 찬 방입니다.', loading: false });
         return false;
       }
 
-      if (existingRoom.students[nickname]) {
+      if (existingRoom.students[nickname]?.isOnline) {
         set({ error: '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.', loading: false });
         return false;
       }
@@ -312,12 +312,12 @@ export const useGameStore = create<GameState>((set, get) => ({
         }
 
         const currentStudentKeys = Object.keys(roomData.students);
-        if (currentStudentKeys.length >= roomData.maxStudents) {
+        if (!roomData.students[nickname] && currentStudentKeys.length >= roomData.maxStudents) {
           joinError = '정원이 가득 찬 방입니다.';
           return;
         }
 
-        if (roomData.students[nickname]) {
+        if (roomData.students[nickname]?.isOnline) {
           joinError = '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.';
           return;
         }
@@ -335,7 +335,9 @@ export const useGameStore = create<GameState>((set, get) => ({
             ...roomData.students,
             [nickname]: newStudent,
           },
-          studentOrder: [...roomData.studentOrder, nickname],
+          studentOrder: roomData.studentOrder.includes(nickname)
+            ? roomData.studentOrder
+            : [...roomData.studentOrder, nickname],
         };
       });
 
@@ -343,6 +345,10 @@ export const useGameStore = create<GameState>((set, get) => ({
         set({ error: joinError || '방 입장에 실패했습니다. 다시 시도해 주세요.', loading: false });
         return false;
       }
+
+      const onlineRef = ref(db, `rooms/${formattedRoomId}/students/${nickname}/isOnline`);
+      await dbSet(onlineRef, true);
+      await onDisconnect(onlineRef).set(false);
 
       set({ loading: false });
       return true;

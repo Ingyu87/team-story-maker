@@ -42,7 +42,6 @@ export const StudentApp: React.FC = () => {
 
       return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
-        leaveRoom(roomId, nickname);
         unsubscribeRoom(roomId);
       };
     }

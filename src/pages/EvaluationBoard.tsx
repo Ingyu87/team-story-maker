@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useGameStore } from '../store/useGameStore';
+import { db } from '../firebase';
+import { ref, onValue } from 'firebase/database';
 import { Award, MessageSquare } from 'lucide-react';
 import type { Rubric, Sentence, Evaluation, Room } from '../types/game';
 
@@ -19,11 +21,16 @@ export const EvaluationBoard: React.FC = () => {
   const [selectedRoomIdForEval, setSelectedRoomIdForEval] = useState<string | null>(null);
   const [scores, setScores] = useState<{ [rubricId: string]: number }>({});
   const [comment, setComment] = useState('');
+  const [evaluationRooms, setEvaluationRooms] = useState<Room[] | null>(null);
+  const roomsForEvaluation = evaluationRooms ?? projectRooms;
+  const teacherId = currentRoom?.teacherId;
+  const projectId = currentRoom?.projectId;
+
   const submittedRoomIds = useMemo(() => {
     const submittedMap: { [roomId: string]: boolean } = {};
     if (!nickname) return submittedMap;
 
-    projectRooms.forEach((rm: Room) => {
+    roomsForEvaluation.forEach((rm: Room) => {
       const evals = rm.evaluations?.[rm.id] || [];
       const myEval = evals.find((e: Evaluation) => e.evaluatorNickname === nickname);
       if (myEval) {
@@ -32,7 +39,7 @@ export const EvaluationBoard: React.FC = () => {
     });
 
     return submittedMap;
-  }, [projectRooms, nickname]);
+  }, [roomsForEvaluation, nickname]);
 
   // 1. 현재 접속한 모둠방 실시간 구독
   useEffect(() => {
@@ -48,10 +55,40 @@ export const EvaluationBoard: React.FC = () => {
 
   // 2. 소속된 프로젝트(학급) 전체 모둠방 목록 로드
   useEffect(() => {
-    if (currentRoom && currentRoom.teacherId && currentRoom.projectId) {
-      loadRoomsByProject(currentRoom.teacherId, currentRoom.projectId);
+    if (!teacherId || !projectId) {
+      setEvaluationRooms(null);
+      return;
     }
-  }, [currentRoom, loadRoomsByProject]);
+
+    const roomsRef = ref(db, 'rooms');
+    const unsubscribe = onValue(roomsRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        setEvaluationRooms([]);
+        return;
+      }
+
+      const roomsData = snapshot.val() as Record<string, Room>;
+      const sameProjectRooms = Object.values(roomsData)
+        .filter((room) => room.teacherId === teacherId && room.projectId === projectId)
+        .map((room) => ({
+          ...room,
+          sentences: room.sentences || [],
+          studentOrder: room.studentOrder || [],
+          students: room.students || {},
+          typingStatus: room.typingStatus || {},
+          evaluations: room.evaluations || {},
+          warningLogs: room.warningLogs || [],
+        }))
+        .sort((a, b) => a.createdAt - b.createdAt);
+
+      setEvaluationRooms(sameProjectRooms);
+    }, (err) => {
+      console.error('Failed to load public project rooms:', err);
+      loadRoomsByProject(teacherId, projectId);
+    });
+
+    return () => unsubscribe();
+  }, [teacherId, projectId, loadRoomsByProject]);
 
   // 평가 대상 방 선택 시 폼 초기화
   const handleSelectRoomForEval = (targetRoom: Room) => {
@@ -89,11 +126,6 @@ export const EvaluationBoard: React.FC = () => {
 
     await submitEvaluation(selectedRoomIdForEval, selectedRoomIdForEval, nickname, scores, comment);
     
-    // 다시 방 리스트 불러와서 갱신
-    if (currentRoom.teacherId && currentRoom.projectId) {
-      await loadRoomsByProject(currentRoom.teacherId, currentRoom.projectId);
-    }
-    
     setSelectedRoomIdForEval(null);
     alert('동료 평가가 등록되었습니다! 👍');
   };
@@ -122,10 +154,10 @@ export const EvaluationBoard: React.FC = () => {
         
         {/* 왼쪽: 모둠별 이야기 갤러리 */}
         <div style={{ flex: '2', minWidth: '350px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <h2>📖 우리 반 이야기 목록 ({projectRooms.length}개 모둠)</h2>
+          <h2>📖 우리 반 이야기 목록 ({roomsForEvaluation.length}개 모둠)</h2>
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {projectRooms.map((room: Room) => {
+            {roomsForEvaluation.map((room: Room) => {
               const fullStory = room.sentences && room.sentences.length > 0
                 ? room.sentences.map((s: Sentence) => s.text).join(' ')
                 : '아직 작성된 이야기가 없습니다.';
@@ -226,7 +258,7 @@ export const EvaluationBoard: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '15px' }}>
                 <Award size={20} color="var(--accent)" />
                 <h3 style={{ margin: 0 }}>
-                  [{projectRooms.find(r => r.id === selectedRoomIdForEval)?.title}] 평가하기
+                  [{roomsForEvaluation.find(r => r.id === selectedRoomIdForEval)?.title}] 평가하기
                 </h3>
               </div>
 
