@@ -10,10 +10,8 @@ export const EvaluationBoard: React.FC = () => {
   const { roomId, nickname } = useParams<{ roomId: string; nickname: string }>();
   const { 
     currentRoom, 
-    projectRooms,
     subscribeRoom, 
     unsubscribeRoom, 
-    loadRoomsByProject,
     submitEvaluation 
   } = useGameStore();
 
@@ -22,9 +20,12 @@ export const EvaluationBoard: React.FC = () => {
   const [scores, setScores] = useState<{ [rubricId: string]: number }>({});
   const [comment, setComment] = useState('');
   const [evaluationRooms, setEvaluationRooms] = useState<Room[] | null>(null);
-  const roomsForEvaluation = evaluationRooms ?? projectRooms;
-  const teacherId = currentRoom?.teacherId;
-  const projectId = currentRoom?.projectId;
+  const roomsForEvaluation = evaluationRooms ?? (currentRoom ? [currentRoom] : []);
+  const projectRoomIds = useMemo(() => {
+    if (!currentRoom) return [];
+    const ids = currentRoom.projectRoomIds?.length ? currentRoom.projectRoomIds : [currentRoom.id];
+    return Array.from(new Set(ids)).sort();
+  }, [currentRoom]);
 
   const submittedRoomIds = useMemo(() => {
     const submittedMap: { [roomId: string]: boolean } = {};
@@ -55,40 +56,46 @@ export const EvaluationBoard: React.FC = () => {
 
   // 2. 소속된 프로젝트(학급) 전체 모둠방 목록 로드
   useEffect(() => {
-    if (!teacherId || !projectId) {
+    if (projectRoomIds.length === 0) {
       setEvaluationRooms(null);
       return;
     }
 
-    const roomsRef = ref(db, 'rooms');
-    const unsubscribe = onValue(roomsRef, (snapshot) => {
-      if (!snapshot.exists()) {
-        setEvaluationRooms([]);
-        return;
-      }
-
-      const roomsData = snapshot.val() as Record<string, Room>;
-      const sameProjectRooms = Object.values(roomsData)
-        .filter((room) => room.teacherId === teacherId && room.projectId === projectId)
-        .map((room) => ({
-          ...room,
-          sentences: room.sentences || [],
-          studentOrder: room.studentOrder || [],
-          students: room.students || {},
-          typingStatus: room.typingStatus || {},
-          evaluations: room.evaluations || {},
-          warningLogs: room.warningLogs || [],
-        }))
-        .sort((a, b) => a.createdAt - b.createdAt);
-
-      setEvaluationRooms(sameProjectRooms);
-    }, (err) => {
-      console.error('Failed to load public project rooms:', err);
-      loadRoomsByProject(teacherId, projectId);
+    const roomDataMap: Record<string, Room> = {};
+    const normalizeEvalRoom = (room: Room): Room => ({
+      ...room,
+      sentences: room.sentences || [],
+      studentOrder: room.studentOrder || [],
+      students: room.students || {},
+      typingStatus: room.typingStatus || {},
+      evaluations: room.evaluations || {},
+      warningLogs: room.warningLogs || [],
     });
 
-    return () => unsubscribe();
-  }, [teacherId, projectId, loadRoomsByProject]);
+    const updateRooms = () => {
+      const rooms = projectRoomIds
+        .map((id) => roomDataMap[id])
+        .filter((room): room is Room => Boolean(room));
+      setEvaluationRooms(rooms);
+    };
+
+    const unsubscribes = projectRoomIds.map((id) => onValue(ref(db, `rooms/${id}`), (snapshot) => {
+      if (snapshot.exists()) {
+        roomDataMap[id] = normalizeEvalRoom(snapshot.val() as Room);
+      } else {
+        delete roomDataMap[id];
+      }
+      updateRooms();
+    }, (err) => {
+      console.error(`Failed to load project room ${id}:`, err);
+      delete roomDataMap[id];
+      updateRooms();
+    }));
+
+    return () => {
+      unsubscribes.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [projectRoomIds]);
 
   // 평가 대상 방 선택 시 폼 초기화
   const handleSelectRoomForEval = (targetRoom: Room) => {
@@ -166,6 +173,11 @@ export const EvaluationBoard: React.FC = () => {
               const hasSubmittedThisRoom = submittedRoomIds[room.id];
               const shouldShowStory = room.status !== 'writing' || isMyRoom;
               const displayStatus = room.status === 'writing' && isMyRoom ? 'evaluating' : room.status;
+              const writtenCount = room.sentences?.length || 0;
+              const writeUnitLabel = room.writeUnit === 'paragraph' ? '문단' : '문장';
+              const progressText = room.endCondition === 'limit'
+                ? `${writtenCount}/${room.sentenceLimit}${writeUnitLabel}`
+                : `${writtenCount}${writeUnitLabel}`;
 
               return (
                 <div 
@@ -193,6 +205,9 @@ export const EvaluationBoard: React.FC = () => {
                         {displayStatus === 'completed' && '🏁 이야기 완성'}
                       </span>
                       <strong style={{ fontSize: '1.2rem' }}>{room.title} {isMyRoom && '(우리 모둠 🏠)'}</strong>
+                      <span style={{ fontSize: '0.85rem', color: '#555', background: '#fff7d6', border: '1.5px solid #333', borderRadius: '14px', padding: '3px 8px', fontWeight: 'bold' }}>
+                        ✍️ {progressText}
+                      </span>
                     </div>
 
                     <div style={{ display: 'flex', gap: '8px' }}>

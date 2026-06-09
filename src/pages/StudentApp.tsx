@@ -165,6 +165,11 @@ export const StudentApp: React.FC = () => {
 
   // 모둠원 목록
   const studentsList = currentRoom.students ? Object.values(currentRoom.students) : [];
+  const writtenCount = currentRoom.sentences?.length || 0;
+  const writeUnitLabel = currentRoom.writeUnit === 'paragraph' ? '문단' : '문장';
+  const progressText = currentRoom.endCondition === 'limit'
+    ? `${writtenCount}/${currentRoom.sentenceLimit}${writeUnitLabel}`
+    : `${writtenCount}${writeUnitLabel} 작성`;
 
   return (
     <div className="app-container" style={{ backgroundColor: currentRoom.layoutMode === 'storybook' ? '#FFF3E0' : undefined }}>
@@ -181,6 +186,9 @@ export const StudentApp: React.FC = () => {
           <span style={{ background: '#4caf50', color: 'white', padding: '5px 12px', borderRadius: '15px', fontWeight: 'bold', fontSize: '0.85rem' }}>
             접속 중 🟢
           </span>
+          <div style={{ marginTop: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#fff', border: '2px solid #333', borderRadius: '18px', padding: '5px 12px', fontWeight: 'bold', fontSize: '0.9rem', boxShadow: '2px 2px 0 #333' }}>
+            ✍️ 현재 {progressText}
+          </div>
         </div>
       </div>
 

@@ -205,6 +205,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     try {
       await ensureAppCheckReady();
 
+      const mappingRef = ref(db, `teachers/${config.teacherId}/projects/${config.projectId}/roomIds`);
+      const mappingSnapshot = await dbGet(mappingRef);
+      const existingProjectRoomIds = mappingSnapshot.exists()
+        ? Object.keys(mappingSnapshot.val() as Record<string, true>)
+        : [];
+
       let roomId = generateRoomId();
       let roomRef = ref(db, `rooms/${roomId}`);
       let snapshot = await dbGet(roomRef);
@@ -233,14 +239,21 @@ export const useGameStore = create<GameState>((set, get) => ({
         evaluations: {},
         teacherId: config.teacherId,
         projectId: config.projectId,
+        projectRoomIds: [...existingProjectRoomIds, roomId],
         turnMode: config.turnMode,
         writeUnit: config.writeUnit || 'sentence',
       };
 
-      await dbUpdate(ref(db), {
+      const updates: Record<string, unknown> = {
         [`rooms/${roomId}`]: newRoom,
         [`teachers/${config.teacherId}/projects/${config.projectId}/roomIds/${roomId}`]: true,
+      };
+
+      existingProjectRoomIds.forEach((existingRoomId) => {
+        updates[`rooms/${existingRoomId}/projectRoomIds`] = [...existingProjectRoomIds, roomId];
       });
+
+      await dbUpdate(ref(db), updates);
 
       set({ loading: false });
       return roomId;
@@ -882,6 +895,13 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       const roomIdsMap = snapshot.val();
       const roomIds = Object.keys(roomIdsMap);
+      const projectRoomIds = [...roomIds].sort();
+
+      roomIds.forEach((rId) => {
+        dbSet(ref(db, `rooms/${rId}/projectRoomIds`), projectRoomIds).catch((err) => {
+          console.error(`Failed to sync project room ids for ${rId}:`, err);
+        });
+      });
 
       // Remove listeners for rooms no longer in the project
       Object.keys(roomCleanups).forEach((rId) => {
