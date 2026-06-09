@@ -164,6 +164,8 @@ export const EvaluationBoard: React.FC = () => {
               
               const isMyRoom = room.id === roomId;
               const hasSubmittedThisRoom = submittedRoomIds[room.id];
+              const shouldShowStory = room.status !== 'writing' || isMyRoom;
+              const displayStatus = room.status === 'writing' && isMyRoom ? 'evaluating' : room.status;
 
               return (
                 <div 
@@ -182,13 +184,13 @@ export const EvaluationBoard: React.FC = () => {
                         fontSize: '0.85rem', 
                         fontWeight: 'bold', 
                         color: '#fff',
-                        background: room.status === 'completed' ? '#4caf50' : room.status === 'evaluating' ? '#ff9800' : '#2196f3',
+                        background: displayStatus === 'completed' ? '#4caf50' : displayStatus === 'evaluating' ? '#ff9800' : '#2196f3',
                         padding: '3px 8px',
                         borderRadius: '10px'
                       }}>
-                        {room.status === 'writing' && '📝 작성 중'}
-                        {room.status === 'evaluating' && '⭐ 평가 진행 중'}
-                        {room.status === 'completed' && '🏁 이야기 완성'}
+                        {displayStatus === 'writing' && '📝 작성 중'}
+                        {displayStatus === 'evaluating' && '⭐ 평가 진행 중'}
+                        {displayStatus === 'completed' && '🏁 이야기 완성'}
                       </span>
                       <strong style={{ fontSize: '1.2rem' }}>{room.title} {isMyRoom && '(우리 모둠 🏠)'}</strong>
                     </div>
@@ -219,10 +221,10 @@ export const EvaluationBoard: React.FC = () => {
                     fontSize: '1.1rem', 
                     lineHeight: '1.7', 
                     fontFamily: 'var(--font-cute)',
-                    color: room.status === 'writing' ? '#999' : '#333',
-                    fontStyle: room.status === 'writing' ? 'italic' : 'normal'
+                    color: shouldShowStory ? '#333' : '#999',
+                    fontStyle: shouldShowStory ? 'normal' : 'italic'
                   }}>
-                    {room.status === 'writing' ? '✏️ 친구들이 이야기를 흥미롭게 쓰고 있는 중입니다. 조금만 기다려 주세요!' : fullStory}
+                    {shouldShowStory ? fullStory : '✏️ 친구들이 이야기를 흥미롭게 쓰고 있는 중입니다. 조금만 기다려 주세요!'}
                   </div>
 
                   {/* 작성 학생 태그 */}
