@@ -170,6 +170,12 @@ export const StudentApp: React.FC = () => {
   const progressText = currentRoom.endCondition === 'limit'
     ? `${writtenCount}/${currentRoom.sentenceLimit}${writeUnitLabel}`
     : `${writtenCount}${writeUnitLabel} 작성`;
+  const progressPercent = currentRoom.endCondition === 'limit'
+    ? Math.min(100, Math.round((writtenCount / Math.max(currentRoom.sentenceLimit, 1)) * 100))
+    : 0;
+  const progressSteps = currentRoom.endCondition === 'limit'
+    ? Array.from({ length: Math.min(currentRoom.sentenceLimit, 20) })
+    : [];
 
   return (
     <div className="app-container" style={{ backgroundColor: currentRoom.layoutMode === 'storybook' ? '#FFF3E0' : undefined }}>
@@ -186,9 +192,6 @@ export const StudentApp: React.FC = () => {
           <span style={{ background: '#4caf50', color: 'white', padding: '5px 12px', borderRadius: '15px', fontWeight: 'bold', fontSize: '0.85rem' }}>
             접속 중 🟢
           </span>
-          <div style={{ marginTop: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#fff', border: '2px solid #333', borderRadius: '18px', padding: '5px 12px', fontWeight: 'bold', fontSize: '0.9rem', boxShadow: '2px 2px 0 #333' }}>
-            ✍️ 현재 {progressText}
-          </div>
         </div>
       </div>
 
@@ -237,6 +240,52 @@ export const StudentApp: React.FC = () => {
 
       {currentRoom.status === 'writing' && (
         <div style={{ display: 'flex', gap: '20px', flexDirection: 'column' }}>
+          <div style={{ background: '#fff', border: '2.5px solid #333', borderRadius: '16px', padding: '14px 18px', boxShadow: '3px 3px 0 #333', textAlign: 'left' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
+              <strong style={{ fontSize: '1rem' }}>✍️ 우리 모둠 작성 현황</strong>
+              <span style={{ background: '#fff7d6', border: '1.5px solid #333', borderRadius: '14px', padding: '4px 10px', fontWeight: 'bold' }}>
+                현재 {progressText}
+              </span>
+            </div>
+            {currentRoom.endCondition === 'limit' ? (
+              <>
+                <div style={{ height: '12px', background: '#eee', border: '1.5px solid #333', borderRadius: '999px', overflow: 'hidden', marginBottom: '10px' }}>
+                  <div style={{ width: `${progressPercent}%`, height: '100%', background: '#4caf50' }} />
+                </div>
+                <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                  {progressSteps.map((_, index) => (
+                    <span
+                      key={index}
+                      title={`${index + 1}번째 ${writeUnitLabel}`}
+                      style={{
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '50%',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        border: '1.5px solid #333',
+                        background: index < writtenCount ? '#d9f99d' : '#fff',
+                        fontSize: '0.8rem',
+                        fontWeight: 'bold',
+                      }}
+                    >
+                      {index < writtenCount ? '✓' : index + 1}
+                    </span>
+                  ))}
+                  {currentRoom.sentenceLimit > 20 && (
+                    <span style={{ alignSelf: 'center', color: '#666', fontWeight: 'bold' }}>
+                      +{currentRoom.sentenceLimit - 20}
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p style={{ margin: 0, color: '#666', fontSize: '0.9rem' }}>
+                자유 작성 모드라 목표 개수 없이 완성할 때까지 이어 씁니다.
+              </p>
+            )}
+          </div>
           
           {/* 레이아웃 1: 채팅 모드 */}
           {currentRoom.layoutMode === 'chat' && (

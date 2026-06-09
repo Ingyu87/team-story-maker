@@ -9,7 +9,14 @@
     "teachers": {
       "$teacherId": {
         ".read": "auth != null && auth.uid == $teacherId",
-        ".write": "auth != null && auth.uid == $teacherId"
+        ".write": "auth != null && auth.uid == $teacherId",
+        "projects": {
+          "$projectId": {
+            "roomIds": {
+              ".read": true
+            }
+          }
+        }
       }
     }
   }

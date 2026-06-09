@@ -21,11 +21,18 @@ export const EvaluationBoard: React.FC = () => {
   const [comment, setComment] = useState('');
   const [evaluationRooms, setEvaluationRooms] = useState<Room[] | null>(null);
   const roomsForEvaluation = evaluationRooms ?? (currentRoom ? [currentRoom] : []);
+  const teacherId = currentRoom?.teacherId;
+  const projectId = currentRoom?.projectId;
+  const [sharedProjectRoomIds, setSharedProjectRoomIds] = useState<string[]>([]);
   const projectRoomIds = useMemo(() => {
     if (!currentRoom) return [];
-    const ids = currentRoom.projectRoomIds?.length ? currentRoom.projectRoomIds : [currentRoom.id];
+    const ids = sharedProjectRoomIds.length
+      ? sharedProjectRoomIds
+      : currentRoom.projectRoomIds?.length
+        ? currentRoom.projectRoomIds
+        : [currentRoom.id];
     return Array.from(new Set(ids)).sort();
-  }, [currentRoom]);
+  }, [currentRoom, sharedProjectRoomIds]);
 
   const submittedRoomIds = useMemo(() => {
     const submittedMap: { [roomId: string]: boolean } = {};
@@ -55,6 +62,28 @@ export const EvaluationBoard: React.FC = () => {
   }, [roomId, subscribeRoom, unsubscribeRoom]);
 
   // 2. 소속된 프로젝트(학급) 전체 모둠방 목록 로드
+  useEffect(() => {
+    if (!teacherId || !projectId) {
+      setSharedProjectRoomIds([]);
+      return;
+    }
+
+    const roomIdsRef = ref(db, `teachers/${teacherId}/projects/${projectId}/roomIds`);
+    const unsubscribe = onValue(roomIdsRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        setSharedProjectRoomIds([]);
+        return;
+      }
+
+      setSharedProjectRoomIds(Object.keys(snapshot.val() as Record<string, true>));
+    }, (err) => {
+      console.error('Failed to load project room ids:', err);
+      setSharedProjectRoomIds([]);
+    });
+
+    return () => unsubscribe();
+  }, [teacherId, projectId]);
+
   useEffect(() => {
     if (projectRoomIds.length === 0) {
       setEvaluationRooms(null);

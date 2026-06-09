@@ -238,15 +238,13 @@ export const TeacherDashboard: React.FC = () => {
   };
 
   // 학생 순서 바꾸기 (지정 순서 모드 시)
-  const moveStudentOrder = async (index: number, direction: 'up' | 'down') => {
+  const setStudentOrderPosition = async (index: number, targetIndex: number) => {
     if (!activeRoomId || !currentRoom) return;
     const order = [...(currentRoom.studentOrder || [])];
-    const targetIdx = direction === 'up' ? index - 1 : index + 1;
-    if (targetIdx < 0 || targetIdx >= order.length) return;
+    if (targetIndex < 0 || targetIndex >= order.length || targetIndex === index) return;
 
-    const temp = order[index];
-    order[index] = order[targetIdx];
-    order[targetIdx] = temp;
+    const [studentName] = order.splice(index, 1);
+    order.splice(targetIndex, 0, studentName);
 
     await updateStudentOrder(activeRoomId, order);
   };
@@ -586,25 +584,21 @@ export const TeacherDashboard: React.FC = () => {
                               </span>
                             )}
                           </div>
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            <button 
-                              type="button" 
-                              className="btn btn-secondary" 
-                              style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none', border: '1.5px solid #333' }}
-                              disabled={idx === 0}
-                              onClick={() => moveStudentOrder(idx, 'up')}
-                            >
-                              ▲
-                            </button>
-                            <button 
-                              type="button" 
-                              className="btn btn-secondary" 
-                              style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none', border: '1.5px solid #333' }}
-                              disabled={idx === joinedStudents.length - 1}
-                              onClick={() => moveStudentOrder(idx, 'down')}
-                            >
-                              ▼
-                            </button>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem', fontWeight: 'bold', color: '#555' }}>
+                              순서
+                              <select
+                                value={idx}
+                                onChange={(e) => setStudentOrderPosition(idx, Number(e.target.value))}
+                                style={{ border: '1.5px solid #333', borderRadius: '8px', padding: '4px 8px', fontWeight: 'bold', background: '#fff' }}
+                              >
+                                {joinedStudents.map((_, orderIndex) => (
+                                  <option key={orderIndex} value={orderIndex}>
+                                    {orderIndex + 1}번
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
                             <button
                               type="button"
                               className="btn btn-secondary"
