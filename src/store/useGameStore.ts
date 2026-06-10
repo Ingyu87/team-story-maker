@@ -298,8 +298,17 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
 
       if (existingRoom.status !== 'waiting') {
-        set({ error: '이미 글쓰기가 시작된 방입니다.', loading: false });
-        return false;
+        if (!existingRoom.students[nickname]) {
+          set({ error: '이미 글쓰기가 시작된 방입니다.', loading: false });
+          return false;
+        }
+
+        const onlineRef = ref(db, `rooms/${formattedRoomId}/students/${nickname}/isOnline`);
+        await dbSet(onlineRef, true);
+        await onDisconnect(onlineRef).set(false);
+
+        set({ loading: false });
+        return true;
       }
 
       const studentKeys = Object.keys(existingRoom.students);
