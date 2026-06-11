@@ -49,6 +49,123 @@ export const EvaluationBoard: React.FC = () => {
     return submittedMap;
   }, [roomsForEvaluation, nickname]);
 
+  const getEvaluationAverageScore = (scores: { [key: string]: number }) => {
+    const values = Object.values(scores);
+    if (values.length === 0) return '-';
+    const average = values.reduce((sum, score) => sum + score, 0) / values.length;
+    return average.toFixed(1);
+  };
+
+  const renderMyRoomEvaluationResults = () => {
+    if (!currentRoom) return null;
+
+    const myRoomEvals = currentRoom.evaluations?.[currentRoom.id] || [];
+    const allScores = myRoomEvals.flatMap((evaluation) =>
+      Object.values(evaluation.scores).filter((score): score is number => typeof score === 'number')
+    );
+    const comments = myRoomEvals.filter((evaluation) => evaluation.comment?.trim());
+    const overallAverage = allScores.length > 0
+      ? (allScores.reduce((sum, score) => sum + score, 0) / allScores.length).toFixed(1)
+      : '-';
+    const rubricStats = currentRoom.rubrics.map((rubric) => {
+      const rubricScores = myRoomEvals
+        .map((evaluation) => evaluation.scores[rubric.id])
+        .filter((score): score is number => typeof score === 'number');
+      const average = rubricScores.length > 0
+        ? (rubricScores.reduce((sum, score) => sum + score, 0) / rubricScores.length).toFixed(1)
+        : '-';
+
+      return {
+        rubric,
+        average,
+        count: rubricScores.length,
+        min: rubricScores.length > 0 ? Math.min(...rubricScores) : '-',
+        max: rubricScores.length > 0 ? Math.max(...rubricScores) : '-',
+      };
+    });
+
+    return (
+      <div className="card" style={{ textAlign: 'left', background: '#f9f9f9' }}>
+        <h3 style={{ borderBottom: '2px dashed #ddd', paddingBottom: '8px', marginBottom: '12px' }}>
+          친구들이 우리 모둠에 준 평가
+        </h3>
+
+        {myRoomEvals.length === 0 ? (
+          <p style={{ color: '#999', fontSize: '0.9rem', textAlign: 'center', padding: '20px 0' }}>
+            아직 친구들이 남긴 동료평가가 없습니다. 다른 모둠 친구들이 평가를 제출하면 여기에 표시됩니다.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '8px' }}>
+              <div style={{ padding: '10px', background: '#fff', border: '1.5px solid #ddd', borderRadius: '10px' }}>
+                <span style={{ display: 'block', color: '#666', fontSize: '0.78rem', fontWeight: 'bold' }}>평가 수</span>
+                <strong>{myRoomEvals.length}개</strong>
+              </div>
+              <div style={{ padding: '10px', background: '#fff', border: '1.5px solid #ddd', borderRadius: '10px' }}>
+                <span style={{ display: 'block', color: '#666', fontSize: '0.78rem', fontWeight: 'bold' }}>전체 평균</span>
+                <strong>{overallAverage}점</strong>
+              </div>
+              <div style={{ padding: '10px', background: '#fff', border: '1.5px solid #ddd', borderRadius: '10px' }}>
+                <span style={{ display: 'block', color: '#666', fontSize: '0.78rem', fontWeight: 'bold' }}>의견 수</span>
+                <strong>{comments.length}개</strong>
+              </div>
+            </div>
+
+            <div>
+              <strong style={{ display: 'block', marginBottom: '8px', color: '#333', fontSize: '0.9rem' }}>평가 기준별 결과</strong>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {rubricStats.map(({ rubric, average, count, min, max }) => (
+                  <div key={rubric.id} style={{ padding: '10px 12px', background: '#fff', border: '1px solid #eee', borderRadius: '10px' }}>
+                    <strong style={{ display: 'block', color: '#333', marginBottom: '4px' }}>{rubric.name}</strong>
+                    <span style={{ color: '#555', fontSize: '0.86rem' }}>
+                      평균 <strong>{average}</strong>점 · 응답 {count}명 · 최저 {min} / 최고 {max}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {comments.length > 0 && (
+              <div>
+                <strong style={{ display: 'block', marginBottom: '8px', color: '#333', fontSize: '0.9rem' }}>친구들의 의견</strong>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
+                  {comments.map((evaluation) => (
+                    <p key={`comment-${evaluation.evaluatorNickname}`} style={{ margin: 0, padding: '10px 12px', background: '#fff', border: '1px solid #eee', borderRadius: '10px', color: '#333', lineHeight: 1.5 }}>
+                      <strong style={{ color: 'var(--primary-hover)' }}>{evaluation.evaluatorNickname}:</strong> "{evaluation.comment}"
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <strong style={{ display: 'block', marginBottom: '8px', color: '#333', fontSize: '0.9rem' }}>개별 평가 상세</strong>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto' }}>
+                {myRoomEvals.map((evaluation) => (
+                  <div key={evaluation.evaluatorNickname} style={{ padding: '10px 12px', background: '#fff', border: '1px solid #eee', borderRadius: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                      <strong style={{ color: 'var(--primary-hover)' }}>{evaluation.evaluatorNickname}</strong>
+                      <span style={{ color: '#555', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                        평균 {getEvaluationAverageScore(evaluation.scores)}점
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', color: '#555', fontSize: '0.82rem' }}>
+                      {currentRoom.rubrics.map((rubric) => (
+                        <span key={rubric.id} style={{ background: '#f5f5f5', border: '1px solid #e0e0e0', borderRadius: '999px', padding: '2px 8px' }}>
+                          {rubric.name}: {evaluation.scores[rubric.id] ?? '-'}점
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // 1. 현재 접속한 모둠방 실시간 구독
   useEffect(() => {
     if (roomId) {
@@ -372,6 +489,8 @@ export const EvaluationBoard: React.FC = () => {
           )}
 
           {/* 우리 모둠에 친구들이 써준 동료 평가 현황 피드백 (우리 모둠방에 달린 평가 확인) */}
+          {renderMyRoomEvaluationResults()}
+
           <div className="card" style={{ textAlign: 'left', background: '#f9f9f9' }}>
             <h3 style={{ borderBottom: '2px dashed #ddd', paddingBottom: '8px', marginBottom: '12px' }}>
               💬 친구들이 우리 모둠에 남긴 한마디
