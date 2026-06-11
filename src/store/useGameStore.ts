@@ -303,9 +303,13 @@ export const useGameStore = create<GameState>((set, get) => ({
           return false;
         }
 
-        const onlineRef = ref(db, `rooms/${formattedRoomId}/students/${nickname}/isOnline`);
-        await dbSet(onlineRef, true);
-        await onDisconnect(onlineRef).set(false);
+        const studentRef = ref(db, `rooms/${formattedRoomId}/students/${nickname}`);
+        await dbUpdate(studentRef, {
+          isOnline: true,
+          lastSeenAt: Date.now(),
+        });
+        await onDisconnect(ref(db, `rooms/${formattedRoomId}/students/${nickname}/isOnline`)).set(false);
+        await onDisconnect(ref(db, `rooms/${formattedRoomId}/students/${nickname}/lastSeenAt`)).set(Date.now());
 
         set({ loading: false });
         return true;
@@ -314,11 +318,6 @@ export const useGameStore = create<GameState>((set, get) => ({
       const studentKeys = Object.keys(existingRoom.students);
       if (!existingRoom.students[nickname] && studentKeys.length >= existingRoom.maxStudents) {
         set({ error: '정원이 가득 찬 방입니다.', loading: false });
-        return false;
-      }
-
-      if (existingRoom.students[nickname]?.isOnline) {
-        set({ error: '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.', loading: false });
         return false;
       }
 
@@ -339,15 +338,11 @@ export const useGameStore = create<GameState>((set, get) => ({
           return;
         }
 
-        if (roomData.students[nickname]?.isOnline) {
-          joinError = '이미 존재하는 닉네임입니다. 다른 닉네임을 사용해주세요.';
-          return;
-        }
-
         const newStudent: Student = {
           nickname,
-          joinedAt: Date.now(),
+          joinedAt: roomData.students[nickname]?.joinedAt || Date.now(),
           isOnline: true,
+          lastSeenAt: Date.now(),
         };
 
         joinError = '';
@@ -371,6 +366,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const onlineRef = ref(db, `rooms/${formattedRoomId}/students/${nickname}/isOnline`);
       await dbSet(onlineRef, true);
       await onDisconnect(onlineRef).set(false);
+      await onDisconnect(ref(db, `rooms/${formattedRoomId}/students/${nickname}/lastSeenAt`)).set(Date.now());
 
       set({ loading: false });
       return true;

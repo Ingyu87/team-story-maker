@@ -12,6 +12,7 @@ export const StudentApp: React.FC = () => {
     currentRoom, 
     subscribeRoom, 
     unsubscribeRoom, 
+    joinRoom,
     submitSentence, 
     updateTypingStatus, 
     leaveRoom, 
@@ -32,6 +33,7 @@ export const StudentApp: React.FC = () => {
   // 1. 방 실시간 구독 및 탭 언로드 시 오프라인 처리
   useEffect(() => {
     if (roomId && nickname) {
+      joinRoom(roomId, nickname);
       subscribeRoom(roomId);
 
       // 브라우저 새로고침/종료 시 오프라인 처리
@@ -39,13 +41,15 @@ export const StudentApp: React.FC = () => {
         leaveRoom(roomId, nickname);
       };
       window.addEventListener('beforeunload', handleBeforeUnload);
+      window.addEventListener('pagehide', handleBeforeUnload);
 
       return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
+        window.removeEventListener('pagehide', handleBeforeUnload);
         unsubscribeRoom(roomId);
       };
     }
-  }, [roomId, nickname, subscribeRoom, leaveRoom, unsubscribeRoom]);
+  }, [roomId, nickname, joinRoom, subscribeRoom, leaveRoom, unsubscribeRoom]);
 
   // 방 상태가 평가('evaluating' 또는 'completed')로 전환되면 평가 보드로 리다이렉트
   useEffect(() => {

@@ -18,6 +18,7 @@ export interface Student {
   nickname: string;
   joinedAt: number;
   isOnline: boolean;
+  lastSeenAt?: number;
 }
 
 export interface Evaluation {
