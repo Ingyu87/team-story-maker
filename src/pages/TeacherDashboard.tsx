@@ -114,6 +114,7 @@ export const TeacherDashboard: React.FC = () => {
   // 로컬 방별 아코디언 펼침 상태
   const [expandedStoryRoomIds, setExpandedStoryRoomIds] = useState<{ [roomId: string]: boolean }>({});
   const [expandedWarningRoomIds, setExpandedWarningRoomIds] = useState<{ [roomId: string]: boolean }>({});
+  const [showProjectStoryBoard, setShowProjectStoryBoard] = useState(false);
 
   // 1. Auth 세션 감지
   useEffect(() => {
@@ -284,6 +285,8 @@ export const TeacherDashboard: React.FC = () => {
     await navigator.clipboard.writeText(storyText);
     alert(`${room.title} 완성글이 복사되었습니다.`);
   };
+
+  const getRoomEvaluationCount = (room: Room) => room.evaluations?.[room.id]?.length || 0;
 
   const downloadRoomActivityImage = (room: Room) => {
     const canvas = document.createElement('canvas');
@@ -1185,12 +1188,105 @@ export const TeacherDashboard: React.FC = () => {
 
             {/* 개설된 이야기방 리스트 */}
             <div className="card">
-              <h2>개설된 이야기방 목록 ({projectRooms.length}개)</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <h2 style={{ margin: 0 }}>개설된 이야기방 목록 ({projectRooms.length}개)</h2>
+                <button
+                  type="button"
+                  className={`btn btn-secondary ${projectRooms.length === 0 ? 'btn-disabled' : ''}`}
+                  style={{ padding: '8px 14px', fontSize: '0.9rem', boxShadow: 'none', borderColor: '#1976d2', color: '#1565c0' }}
+                  disabled={projectRooms.length === 0}
+                  onClick={() => setShowProjectStoryBoard((prev) => !prev)}
+                >
+                  <BookOpen size={16} />
+                  {showProjectStoryBoard ? '전체 모둠 글 닫기' : '전체 모둠 글 보기'}
+                </button>
+              </div>
               {projectRooms.length === 0 ? (
                 <div style={{ padding: '40px 10px', textAlign: 'center', color: '#999' }}>
                   이 폴더 하위에 개설된 이야기방이 아직 없습니다. '새 이야기방 만들기'로 방을 만들어 주세요.
                 </div>
               ) : (
+                <>
+                {showProjectStoryBoard && (
+                  <div style={{ marginTop: '18px', padding: '18px', border: '2.5px solid #1976d2', borderRadius: '12px', background: '#f7fbff', textAlign: 'left' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                      <div>
+                        <h3 style={{ margin: 0, color: '#0d47a1' }}>전체 모둠 글 확인</h3>
+                        <p style={{ margin: '5px 0 0 0', color: '#555', fontSize: '0.9rem' }}>
+                          학생 평가 화면처럼 모든 모둠의 작성 내용을 한 번에 확인합니다.
+                        </p>
+                      </div>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#0d47a1', background: '#e3f2fd', border: '1.5px solid #90caf9', borderRadius: '999px', padding: '5px 10px' }}>
+                        {projectRooms.filter((room) => room.status === 'evaluating' || room.status === 'completed').length}/{projectRooms.length}개 모둠 완성
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                      {projectRooms.map((room) => {
+                        const statusMeta = getRoomStatusMeta(room.status);
+                        const storyText = getRoomStoryText(room);
+                        const students = room.studentOrder?.length
+                          ? room.studentOrder
+                          : Object.keys(room.students || {});
+                        const evaluationCount = getRoomEvaluationCount(room);
+                        const writtenCount = room.sentences?.length || 0;
+
+                        return (
+                          <div key={`story-board-${room.id}`} style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '14px', border: '2px solid #333', borderRadius: '10px', background: '#fff', minHeight: '220px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                              <div>
+                                <strong style={{ fontSize: '1rem' }}>{room.title} ({room.id})</strong>
+                                <div style={{ marginTop: '5px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#fff', background: statusMeta.background, borderRadius: '999px', padding: '3px 8px' }}>
+                                    {statusMeta.label}
+                                  </span>
+                                  <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#555', background: '#f5f5f5', border: '1px solid #ddd', borderRadius: '999px', padding: '3px 8px' }}>
+                                    {writtenCount}개 {getWriteUnitLabel(room.writeUnit)}
+                                  </span>
+                                  <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#555', background: '#f5f5f5', border: '1px solid #ddd', borderRadius: '999px', padding: '3px 8px' }}>
+                                    동료평가 {evaluationCount}개
+                                  </span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className={`btn btn-secondary ${!storyText ? 'btn-disabled' : ''}`}
+                                style={{ padding: '4px 8px', fontSize: '0.75rem', boxShadow: 'none' }}
+                                disabled={!storyText}
+                                onClick={() => copyRoomStory(room)}
+                              >
+                                <Copy size={13} /> 복사
+                              </button>
+                            </div>
+
+                            <div
+                              role={storyText ? 'button' : undefined}
+                              tabIndex={storyText ? 0 : undefined}
+                              title={storyText ? '클릭하면 완성글이 복사됩니다.' : undefined}
+                              style={{ flex: 1, padding: '12px', background: '#fffdf7', border: '1.5px solid #eee', borderRadius: '8px', color: storyText ? '#333' : '#999', lineHeight: 1.65, fontSize: '0.98rem', cursor: storyText ? 'copy' : 'default', maxHeight: '240px', overflowY: 'auto', whiteSpace: room.writeUnit === 'paragraph' ? 'pre-wrap' : 'normal' }}
+                              onClick={() => {
+                                if (storyText) copyRoomStory(room);
+                              }}
+                              onKeyDown={(e) => {
+                                if (storyText && (e.key === 'Enter' || e.key === ' ')) {
+                                  e.preventDefault();
+                                  copyRoomStory(room);
+                                }
+                              }}
+                            >
+                              {storyText || '아직 작성된 글이 없습니다.'}
+                            </div>
+
+                            <div style={{ color: '#666', fontSize: '0.82rem' }}>
+                              <strong>참여 학생:</strong> {students.length > 0 ? students.join(', ') : '대기 중'}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '15px' }}>
                   {projectRooms.map((room) => {
                     const joinedCount = Object.keys(room.students || {}).length;
@@ -1447,6 +1543,7 @@ export const TeacherDashboard: React.FC = () => {
                     );
                   })}
                 </div>
+                </>
               )}
             </div>
           </div>
