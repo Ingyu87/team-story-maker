@@ -294,6 +294,114 @@ export const TeacherDashboard: React.FC = () => {
     return average.toFixed(1);
   };
 
+  const renderPeerEvaluationResults = (room: Room, compact = false) => {
+    const peerEvaluations = getRoomPeerEvaluations(room);
+    const allScores = peerEvaluations.flatMap((evaluation) =>
+      Object.values(evaluation.scores).filter((score): score is number => typeof score === 'number')
+    );
+    const overallAverage = allScores.length > 0
+      ? (allScores.reduce((sum, score) => sum + score, 0) / allScores.length).toFixed(1)
+      : '-';
+    const comments = peerEvaluations.filter((evaluation) => evaluation.comment?.trim());
+    const rubricStats = room.rubrics.map((rubric) => {
+      const scores = peerEvaluations
+        .map((evaluation) => evaluation.scores[rubric.id])
+        .filter((score): score is number => typeof score === 'number');
+      const average = scores.length > 0
+        ? (scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(1)
+        : '-';
+
+      return {
+        rubric,
+        average,
+        count: scores.length,
+        min: scores.length > 0 ? Math.min(...scores) : '-',
+        max: scores.length > 0 ? Math.max(...scores) : '-',
+      };
+    });
+
+    return (
+      <div style={{ textAlign: 'left', padding: compact ? '12px' : '16px', background: compact ? '#fafafa' : '#f5fbff', border: compact ? '1.5px solid #e0e0e0' : '2px solid #90caf9', borderRadius: '12px' }}>
+        <h3 style={{ margin: '0 0 10px 0', color: '#0d47a1', fontSize: compact ? '0.95rem' : '1.1rem' }}>
+          학생 동료평가 결과 ({peerEvaluations.length}개)
+        </h3>
+
+        {peerEvaluations.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: compact ? '10px' : '14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '8px' }}>
+              <div style={{ padding: '9px 10px', background: '#fff', border: '1px solid #d7e8fb', borderRadius: '8px' }}>
+                <span style={{ display: 'block', color: '#666', fontSize: '0.78rem', fontWeight: 'bold' }}>제출 수</span>
+                <strong style={{ color: '#0d47a1' }}>{peerEvaluations.length}개</strong>
+              </div>
+              <div style={{ padding: '9px 10px', background: '#fff', border: '1px solid #d7e8fb', borderRadius: '8px' }}>
+                <span style={{ display: 'block', color: '#666', fontSize: '0.78rem', fontWeight: 'bold' }}>전체 평균</span>
+                <strong style={{ color: '#0d47a1' }}>{overallAverage}점</strong>
+              </div>
+              <div style={{ padding: '9px 10px', background: '#fff', border: '1px solid #d7e8fb', borderRadius: '8px' }}>
+                <span style={{ display: 'block', color: '#666', fontSize: '0.78rem', fontWeight: 'bold' }}>의견 수</span>
+                <strong style={{ color: '#0d47a1' }}>{comments.length}개</strong>
+              </div>
+            </div>
+
+            <div>
+              <strong style={{ display: 'block', marginBottom: '6px', color: '#333', fontSize: '0.86rem' }}>루브릭별 점수 요약</strong>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {rubricStats.map(({ rubric, average, count, min, max }) => (
+                  <div key={rubric.id} style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(160px, 1fr) auto', gap: '5px 10px', padding: '8px 10px', background: '#fff', border: '1px solid #eee', borderRadius: '8px' }}>
+                    <span style={{ fontWeight: 'bold', color: '#333', fontSize: '0.86rem' }}>{rubric.name}</span>
+                    <span style={{ color: '#555', fontSize: '0.84rem' }}>
+                      평균 <strong>{average}</strong>점 · 응답 {count}명 · 최저 {min} / 최고 {max}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {comments.length > 0 && (
+              <div>
+                <strong style={{ display: 'block', marginBottom: '6px', color: '#333', fontSize: '0.86rem' }}>학생 의견 모음</strong>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: compact ? '120px' : '180px', overflowY: 'auto' }}>
+                  {comments.map((evaluation) => (
+                    <p key={`comment-${evaluation.evaluatorNickname}`} style={{ margin: 0, padding: '8px 10px', background: '#fff', border: '1px solid #eee', borderRadius: '8px', color: '#333', fontSize: '0.86rem', lineHeight: 1.45 }}>
+                      <strong style={{ color: '#1565c0' }}>{evaluation.evaluatorNickname}:</strong> "{evaluation.comment}"
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <strong style={{ display: 'block', marginBottom: '6px', color: '#333', fontSize: '0.86rem' }}>개별 제출 상세</strong>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: compact ? '170px' : '260px', overflowY: 'auto' }}>
+                {peerEvaluations.map((evaluation) => (
+                  <div key={evaluation.evaluatorNickname} style={{ padding: '9px 10px', background: '#fff', border: '1px solid #eee', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                      <span style={{ fontWeight: 'bold', color: '#1565c0', fontSize: '0.86rem' }}>{evaluation.evaluatorNickname}</span>
+                      <span style={{ color: '#555', fontSize: '0.82rem', fontWeight: 'bold' }}>
+                        평균 {getEvaluationAverageScore(evaluation.scores)}점
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', color: '#555', fontSize: '0.8rem' }}>
+                      {room.rubrics.map((rubric) => (
+                        <span key={rubric.id} style={{ background: '#f5f5f5', border: '1px solid #e0e0e0', borderRadius: '999px', padding: '2px 8px' }}>
+                          {rubric.name}: {evaluation.scores[rubric.id] ?? '-'}점
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p style={{ margin: 0, color: '#777', fontSize: compact ? '0.82rem' : '0.9rem' }}>
+            아직 이 모둠에 제출된 학생 동료평가가 없습니다.
+          </p>
+        )}
+      </div>
+    );
+  };
+
   const downloadRoomActivityImage = (room: Room) => {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
@@ -812,42 +920,9 @@ export const TeacherDashboard: React.FC = () => {
                 <h2>👨‍🏫 교사 최종 평가 피드백 등록</h2>
               </div>
 
-              {(() => {
-                const peerEvaluations = getRoomPeerEvaluations(currentRoom);
-                return (
-                  <div style={{ textAlign: 'left', padding: '16px', background: '#f5fbff', border: '2px solid #90caf9', borderRadius: '12px', marginBottom: '18px' }}>
-                    <h3 style={{ margin: '0 0 10px 0', color: '#0d47a1' }}>학생 동료평가 ({peerEvaluations.length}개)</h3>
-                    {peerEvaluations.length > 0 ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '260px', overflowY: 'auto' }}>
-                        {peerEvaluations.map((evaluation) => (
-                          <div key={evaluation.evaluatorNickname} style={{ padding: '10px 12px', background: '#fff', border: '1.5px solid #ddd', borderRadius: '10px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '6px' }}>
-                              <strong style={{ color: '#1565c0' }}>{evaluation.evaluatorNickname}</strong>
-                              <span style={{ color: '#555', fontWeight: 'bold', fontSize: '0.9rem' }}>
-                                평균 {getEvaluationAverageScore(evaluation.scores)}점
-                              </span>
-                            </div>
-                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', color: '#555', fontSize: '0.86rem', marginBottom: evaluation.comment?.trim() ? '7px' : 0 }}>
-                              {currentRoom.rubrics.map((rubric) => (
-                                <span key={rubric.id} style={{ background: '#f5f5f5', border: '1px solid #e0e0e0', borderRadius: '999px', padding: '2px 8px' }}>
-                                  {rubric.name}: {evaluation.scores[rubric.id] ?? '-'}점
-                                </span>
-                              ))}
-                            </div>
-                            {evaluation.comment?.trim() && (
-                              <p style={{ margin: 0, color: '#333', lineHeight: 1.5 }}>
-                                "{evaluation.comment}"
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p style={{ margin: 0, color: '#777' }}>아직 이 모둠에 제출된 학생 동료평가가 없습니다.</p>
-                    )}
-                  </div>
-                );
-              })()}
+              <div style={{ marginBottom: '18px' }}>
+                {renderPeerEvaluationResults(currentRoom)}
+              </div>
 
               {currentRoom.status === 'completed' && currentRoom.teacherEvaluation ? (
                 <div style={{ textAlign: 'left', padding: '20px', background: '#f9f9f9', borderRadius: '15px', border: '2px solid #333' }}>
@@ -1324,43 +1399,7 @@ export const TeacherDashboard: React.FC = () => {
                               <strong>참여 학생:</strong> {students.length > 0 ? students.join(', ') : '대기 중'}
                             </div>
 
-                            <div style={{ padding: '10px 12px', border: '1.5px solid #e0e0e0', borderRadius: '8px', background: '#fafafa' }}>
-                              <strong style={{ display: 'block', marginBottom: '8px', color: '#333', fontSize: '0.85rem' }}>
-                                학생 동료평가
-                              </strong>
-                              {peerEvaluations.length > 0 ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
-                                  {peerEvaluations.map((evaluation) => (
-                                    <div key={evaluation.evaluatorNickname} style={{ padding: '8px 10px', background: '#fff', border: '1px solid #eee', borderRadius: '8px' }}>
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', marginBottom: '5px' }}>
-                                        <span style={{ fontWeight: 'bold', color: '#1565c0', fontSize: '0.84rem' }}>
-                                          {evaluation.evaluatorNickname}
-                                        </span>
-                                        <span style={{ color: '#555', fontSize: '0.8rem', fontWeight: 'bold' }}>
-                                          평균 {getEvaluationAverageScore(evaluation.scores)}점
-                                        </span>
-                                      </div>
-                                      <div style={{ color: '#555', fontSize: '0.8rem', lineHeight: 1.5 }}>
-                                        {room.rubrics.map((rubric) => (
-                                          <span key={rubric.id} style={{ marginRight: '8px', whiteSpace: 'nowrap' }}>
-                                            {rubric.name}: {evaluation.scores[rubric.id] ?? '-'}점
-                                          </span>
-                                        ))}
-                                      </div>
-                                      {evaluation.comment?.trim() && (
-                                        <p style={{ margin: '6px 0 0 0', color: '#333', fontSize: '0.86rem', lineHeight: 1.45 }}>
-                                          "{evaluation.comment}"
-                                        </p>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p style={{ margin: 0, color: '#999', fontSize: '0.82rem' }}>
-                                  아직 학생 동료평가가 없습니다.
-                                </p>
-                              )}
-                            </div>
+                            {renderPeerEvaluationResults(room, true)}
                           </div>
                         );
                       })}
