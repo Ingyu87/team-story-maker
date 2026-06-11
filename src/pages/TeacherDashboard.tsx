@@ -26,6 +26,19 @@ const getWriteUnitLabel = (unit: 'sentence' | 'paragraph' = 'sentence') =>
 const getWriteUnitLimitHint = (unit: 'sentence' | 'paragraph' = 'sentence') =>
   unit === 'paragraph' ? '문단 개수 기준으로 종료됩니다.' : '문장 개수 기준으로 종료됩니다.';
 
+const getRoomStatusMeta = (status: Room['status']) => {
+  if (status === 'completed') {
+    return { label: '완료됨', background: '#4caf50' };
+  }
+  if (status === 'writing') {
+    return { label: '진행 중', background: '#2196f3' };
+  }
+  if (status === 'evaluating') {
+    return { label: '학생 완성', background: '#9c27b0' };
+  }
+  return { label: '대기 중', background: '#ff9800' };
+};
+
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -1185,6 +1198,7 @@ export const TeacherDashboard: React.FC = () => {
                     const warningCount = room.warningLogs?.length || 0;
                     const hasSentences = room.sentences && room.sentences.length > 0;
                     const students = room.students ? Object.values(room.students) : [];
+                    const statusMeta = getRoomStatusMeta(room.status);
 
                     return (
                       <div key={room.id} style={{ display: 'flex', flexDirection: 'column', padding: '20px', border: '2.5px solid #333', borderRadius: '15px', background: '#fff', boxShadow: '4px 4px 0 #333', gap: '12px' }}>
@@ -1195,14 +1209,11 @@ export const TeacherDashboard: React.FC = () => {
                                 fontSize: '0.8rem', 
                                 fontWeight: 'bold', 
                                 color: '#fff',
-                                background: room.status === 'completed' ? '#4caf50' : room.status === 'writing' ? '#2196f3' : room.status === 'evaluating' ? '#9c27b0' : '#ff9800',
+                                background: statusMeta.background,
                                 padding: '3px 8px',
                                 borderRadius: '10px'
                               }}>
-                                {room.status === 'waiting' && '대기 중'}
-                                {room.status === 'writing' && '진행 중'}
-                                {room.status === 'evaluating' && '평가 대기'}
-                                {room.status === 'completed' && '완료됨'}
+                                {statusMeta.label}
                               </span>
                               
                               <span style={{ 
@@ -1238,6 +1249,12 @@ export const TeacherDashboard: React.FC = () => {
                               순서: {room.turnMode === 'free' ? '자유' : room.turnMode === 'sequence' ? '지정' : '랜덤'} |{' '}
                               {room.sentences?.length || 0}개 {getWriteUnitLabel(room.writeUnit)} 작성됨
                             </div>
+
+                            {room.status === 'evaluating' && (
+                              <div style={{ marginTop: '8px', color: '#6a1b9a', fontSize: '0.9rem', fontWeight: 'bold' }}>
+                                학생이 완성 버튼을 눌렀습니다. 교사 평가를 기록할 수 있습니다.
+                              </div>
+                            )}
 
                             {/* 참여 학생 이름 목록 실시간 표시 */}
                             <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
