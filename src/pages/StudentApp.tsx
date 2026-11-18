@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useGameStore } from '../store/useGameStore';
+import { listActiveStudents, useGameStore } from '../store/useGameStore';
 import { filterSentence } from '../utils/filter';
 import type { FilterResult } from '../utils/filter';
 import { PenTool, AlertCircle } from 'lucide-react';
@@ -20,7 +20,8 @@ export const StudentApp: React.FC = () => {
     updateTypingStatus, 
     leaveRoom, 
     finishWriting,
-    setError 
+    setError,
+    exitKickedStudent,
   } = useGameStore();
 
   // 로컬 자동 저장 키
@@ -63,12 +64,16 @@ export const StudentApp: React.FC = () => {
 
   useEffect(() => {
     if (!currentRoom || !nickname || removedFromRoomRef.current) return;
-    if (!currentRoom.students?.[nickname]) {
+    const kicked = Boolean(currentRoom.kickedStudents?.[nickname]);
+    if (kicked || !currentRoom.students?.[nickname]) {
       removedFromRoomRef.current = true;
+      if (kicked && roomId) {
+        void exitKickedStudent(roomId, nickname);
+      }
       alert('선생님이 이야기방에서 내보냈습니다. 다시 참여하려면 선생님께 확인해 주세요.');
       navigate(`/join?code=${roomId || ''}`, { replace: true });
     }
-  }, [currentRoom, navigate, nickname, roomId]);
+  }, [currentRoom, exitKickedStudent, navigate, nickname, roomId]);
 
   // 2. 실시간 타이핑 상태 Firebase 동기화 (간단한 디바운스 적용)
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -172,7 +177,7 @@ export const StudentApp: React.FC = () => {
   const isMyTurn = currentRoom.turnMode === 'free' || currentTurnPlayer === nickname;
 
   // 모둠원 목록
-  const studentsList = currentRoom.students ? Object.values(currentRoom.students) : [];
+  const studentsList = listActiveStudents(currentRoom);
   const writtenCount = currentRoom.sentences?.length || 0;
   const writeUnitLabel = currentRoom.writeUnit === 'paragraph' ? '문단' : '문장';
   const progressText = currentRoom.endCondition === 'limit'

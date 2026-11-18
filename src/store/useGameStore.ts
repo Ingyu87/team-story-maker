@@ -29,6 +29,7 @@ interface GameState {
   joinRoom: (roomId: string, nickname: string) => Promise<boolean>;
   leaveRoom: (roomId: string, nickname: string) => Promise<void>;
   removeStudent: (roomId: string, nickname: string) => Promise<void>;
+  exitKickedStudent: (roomId: string, nickname: string) => Promise<void>;
   startRoom: (roomId: string) => Promise<void>;
   submitSentence: (roomId: string, nickname: string, text: string) => Promise<void>;
   updateSentenceText: (roomId: string, sentenceId: string, text: string) => Promise<void>;
@@ -148,10 +149,24 @@ function normalizeRoom(roomData: Room): Room {
     sentences: roomData.sentences || [],
     studentOrder: roomData.studentOrder || [],
     students: roomData.students || {},
+    kickedStudents: roomData.kickedStudents || {},
     typingStatus: roomData.typingStatus || {},
     evaluations: roomData.evaluations || {},
     warningLogs: roomData.warningLogs || [],
   };
+}
+
+export function listActiveStudents(room: Pick<Room, 'students' | 'kickedStudents'> | null | undefined) {
+  const kicked = room?.kickedStudents || {};
+  return Object.entries(room?.students || {})
+    .filter(([key]) => !kicked[key])
+    .map(([key, student]) => ({
+      key,
+      nickname: student?.nickname?.trim() || key,
+      isOnline: Boolean(student?.isOnline),
+      joinedAt: student?.joinedAt || 0,
+      lastSeenAt: student?.lastSeenAt,
+    }));
 }
 
 function missingRoomMessage(roomId: string, availableRoomIds: string[] | null = null): string {
@@ -298,6 +313,11 @@ export const useGameStore = create<GameState>((set, get) => ({
         return false;
       }
 
+      if (existingRoom.kickedStudents?.[nickname]) {
+        set({ error: '선생님께서 이 이야기방에서 내보냈습니다. 다시 들어오려면 선생님께 확인해 주세요.', loading: false });
+        return false;
+      }
+
       if (existingRoom.status !== 'waiting') {
         if (!existingRoom.students[nickname]) {
           set({ error: '이미 글쓰기가 시작된 방입니다.', loading: false });
@@ -316,8 +336,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         return true;
       }
 
-      const studentKeys = Object.keys(existingRoom.students);
-      if (!existingRoom.students[nickname] && studentKeys.length >= existingRoom.maxStudents) {
+      const activeStudentCount = listActiveStudents(existingRoom).length;
+      if (!existingRoom.students[nickname] && activeStudentCount >= existingRoom.maxStudents) {
         set({ error: '정원이 가득 찬 방입니다.', loading: false });
         return false;
       }
@@ -328,13 +348,17 @@ export const useGameStore = create<GameState>((set, get) => ({
         // We already loaded and validated the room above, so use that snapshot as the
         // initial transaction value instead of aborting a valid join.
         const roomData = normalizeRoom(currentData || existingRoom);
+        if (roomData.kickedStudents?.[nickname]) {
+          joinError = '선생님께서 이 이야기방에서 내보냈습니다. 다시 들어오려면 선생님께 확인해 주세요.';
+          return;
+        }
         if (roomData.status !== 'waiting') {
           joinError = '이미 글쓰기가 시작된 방입니다.';
           return;
         }
 
-        const currentStudentKeys = Object.keys(roomData.students);
-        if (!roomData.students[nickname] && currentStudentKeys.length >= roomData.maxStudents) {
+        const currentStudentCount = listActiveStudents(roomData).length;
+        if (!roomData.students[nickname] && currentStudentCount >= roomData.maxStudents) {
           joinError = '정원이 가득 찬 방입니다.';
           return;
         }
@@ -409,7 +433,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
 
-  removeStudent: async (roomId, nickname) => {
+  removeStudent: async (roomId, studentKey) => {
+    if (!studentKey) return;
     const formattedRoomId = roomId.toUpperCase();
     try {
       const roomRef = ref(db, `rooms/${formattedRoomId}`);
@@ -417,33 +442,55 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (!snapshot.exists()) return;
 
       const room = normalizeRoom(snapshot.val() as Room);
-      const updatedStudents = { ...room.students };
-      const updatedTypingStatus = { ...room.typingStatus };
+      const keysToRemove = new Set<string>([studentKey]);
+      Object.entries(room.students || {}).forEach(([key, student]) => {
+        if (key === studentKey || student?.nickname === studentKey) keysToRemove.add(key);
+      });
+
       const oldOrder = room.studentOrder || [];
-      const removedIndex = oldOrder.indexOf(nickname);
-      const updatedOrder = oldOrder.filter(name => name !== nickname);
-
-      delete updatedStudents[nickname];
-      delete updatedTypingStatus[nickname];
-
-      let nextTurnIndex = room.currentTurnIndex || 0;
+      const updatedOrder = oldOrder.filter((name) => !keysToRemove.has(name));
+      const removedBeforeTurn = oldOrder
+        .slice(0, room.currentTurnIndex || 0)
+        .filter((name) => keysToRemove.has(name))
+        .length;
+      let nextTurnIndex = (room.currentTurnIndex || 0) - removedBeforeTurn;
       if (updatedOrder.length === 0) {
         nextTurnIndex = 0;
-      } else if (removedIndex > -1 && removedIndex < nextTurnIndex) {
-        nextTurnIndex -= 1;
-      } else if (nextTurnIndex >= updatedOrder.length) {
+      } else if (nextTurnIndex >= updatedOrder.length || nextTurnIndex < 0) {
         nextTurnIndex = 0;
       }
 
-      await dbUpdate(roomRef, {
-        students: Object.keys(updatedStudents).length > 0 ? updatedStudents : null,
-        studentOrder: updatedOrder.length > 0 ? updatedOrder : null,
-        typingStatus: Object.keys(updatedTypingStatus).length > 0 ? updatedTypingStatus : null,
-        currentTurnIndex: nextTurnIndex,
-        status: updatedOrder.length === 0 && room.status === 'writing' ? 'waiting' : room.status,
+      const updates: Record<string, unknown> = {
+        [`rooms/${formattedRoomId}/studentOrder`]: updatedOrder,
+        [`rooms/${formattedRoomId}/currentTurnIndex`]: nextTurnIndex,
+        [`rooms/${formattedRoomId}/status`]: updatedOrder.length === 0 && room.status === 'writing' ? 'waiting' : room.status,
+      };
+      keysToRemove.forEach((key) => {
+        updates[`rooms/${formattedRoomId}/students/${key}`] = null;
+        updates[`rooms/${formattedRoomId}/typingStatus/${key}`] = null;
+        updates[`rooms/${formattedRoomId}/kickedStudents/${key}`] = true;
       });
+
+      await dbUpdate(ref(db), updates);
     } catch (err) {
       console.error('Failed to remove student:', err);
+    }
+  },
+
+  exitKickedStudent: async (roomId, nickname) => {
+    if (!nickname) return;
+    const formattedRoomId = roomId.toUpperCase();
+    const onlineRef = ref(db, `rooms/${formattedRoomId}/students/${nickname}/isOnline`);
+    const seenRef = ref(db, `rooms/${formattedRoomId}/students/${nickname}/lastSeenAt`);
+    try {
+      await onDisconnect(onlineRef).cancel();
+      await onDisconnect(seenRef).cancel();
+      await dbUpdate(ref(db), {
+        [`rooms/${formattedRoomId}/students/${nickname}`]: null,
+        [`rooms/${formattedRoomId}/typingStatus/${nickname}`]: null,
+      });
+    } catch (err) {
+      console.error('Failed to exit kicked student:', err);
     }
   },
 

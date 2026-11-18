@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useGameStore } from '../store/useGameStore';
+import { listActiveStudents, useGameStore } from '../store/useGameStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { TeacherAuth } from './TeacherAuth';
 import type { LayoutMode, Rubric, Room } from '../types/game';
@@ -676,7 +676,7 @@ export const TeacherDashboard: React.FC = () => {
     return <TeacherAuth />;
   }
 
-  const joinedStudents = currentRoom?.students ? Object.values(currentRoom.students) : [];
+  const joinedStudents = listActiveStudents(currentRoom);
   const activeProject = projects.find((p) => p.id === selectedProjectId);
 
   const studentWarningCounts: { [nickname: string]: number } = {};
@@ -803,7 +803,7 @@ export const TeacherDashboard: React.FC = () => {
                               type="button"
                               className="btn btn-secondary btn-compact"
                               style={{ border: '1.5px solid #ef9a9a', background: '#ffebee', color: '#c62828' }}
-                              onClick={() => handleRemoveStudent(st.nickname)}
+                              onClick={() => handleRemoveStudent(st.key)}
                             >
                               내보내기
                             </button>
@@ -838,7 +838,7 @@ export const TeacherDashboard: React.FC = () => {
                             type="button"
                             className="btn btn-secondary btn-compact"
                             style={{ border: '1.5px solid #ef9a9a', background: '#ffebee', color: '#c62828' }}
-                            onClick={() => handleRemoveStudent(st.nickname)}
+                            onClick={() => handleRemoveStudent(st.key)}
                           >
                             내보내기
                           </button>
@@ -1497,11 +1497,12 @@ export const TeacherDashboard: React.FC = () => {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '15px' }}>
                   {projectRooms.map((room) => {
-                    const joinedCount = Object.keys(room.students || {}).length;
-                    const onlineCount = Object.values(room.students || {}).filter(s => s.isOnline).length;
+                    const activeStudents = listActiveStudents(room);
+                    const joinedCount = activeStudents.length;
+                    const onlineCount = activeStudents.filter((student) => student.isOnline).length;
                     const warningCount = room.warningLogs?.length || 0;
                     const hasSentences = room.sentences && room.sentences.length > 0;
-                    const students = room.students ? Object.values(room.students) : [];
+                    const students = activeStudents;
                     const statusMeta = getRoomStatusMeta(room.status);
 
                     return (

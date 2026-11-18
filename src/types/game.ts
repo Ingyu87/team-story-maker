@@ -39,6 +39,7 @@ export interface Room {
   createdAt: number;
   currentTurnIndex: number; // 현재 차례인 학생의 인덱스
   students: { [nickname: string]: Student }; // 접속 학생 목록
+  kickedStudents?: { [nickname: string]: true }; // 교사가 내보낸 학생. 접속 기록이 다시 생겨도 목록에 넣지 않는다.
   studentOrder: string[]; // 순서가 정해진 닉네임 리스트 (입장 순서 등)
   sentences: Sentence[]; // 작성된 이야기 문장들
   typingStatus: {
