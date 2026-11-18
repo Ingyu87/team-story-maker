@@ -66,6 +66,7 @@ interface GameState {
       writeUnit?: 'sentence' | 'paragraph';
     }
   ) => Promise<void>;
+  removeProjectRooms: (teacherId: string, projectId: string, roomIds: string[]) => Promise<void>;
   subscribeRoomsByProject: (teacherId: string, projectId: string) => (() => void);
   resetStudents: (roomId: string) => Promise<void>;
   resetActivity: (roomId: string) => Promise<void>;
@@ -871,6 +872,35 @@ export const useGameStore = create<GameState>((set, get) => ({
       set({ loading: false });
     } catch (err: unknown) {
       set({ error: getErrorMessage(err, '설정 수정에 실패했습니다.'), loading: false });
+      throw err;
+    }
+  },
+
+  removeProjectRooms: async (teacherId, projectId, roomIds) => {
+    if (roomIds.length === 0) return;
+    set({ loading: true, error: null });
+    try {
+      const mappingRef = ref(db, `teachers/${teacherId}/projects/${projectId}/roomIds`);
+      const snapshot = await dbGet(mappingRef);
+      const existingIds = snapshot.exists()
+        ? Object.keys(snapshot.val() as Record<string, true>)
+        : [];
+      const removeSet = new Set(roomIds);
+      const remainingIds = existingIds.filter((id) => !removeSet.has(id)).sort();
+
+      const updates: Record<string, unknown> = {};
+      roomIds.forEach((roomId) => {
+        updates[`rooms/${roomId}`] = null;
+        updates[`teachers/${teacherId}/projects/${projectId}/roomIds/${roomId}`] = null;
+      });
+      remainingIds.forEach((roomId) => {
+        updates[`rooms/${roomId}/projectRoomIds`] = remainingIds;
+      });
+
+      await dbUpdate(ref(db), updates);
+      set({ loading: false });
+    } catch (err: unknown) {
+      set({ error: getErrorMessage(err, '모둠 삭제에 실패했습니다.'), loading: false });
       throw err;
     }
   },

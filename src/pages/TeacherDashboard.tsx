@@ -43,6 +43,23 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+const GROUP_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+const getRoomGroupNumber = (title: string) => {
+  const match = title.trim().match(/^(\d+)\s*모둠$/);
+  return match ? Number(match[1]) : null;
+};
+
+const sortRoomsByGroupNumber = (rooms: Room[]) =>
+  [...rooms].sort((a, b) => {
+    const aNum = getRoomGroupNumber(a.title);
+    const bNum = getRoomGroupNumber(b.title);
+    if (aNum !== null && bNum !== null && aNum !== bNum) return aNum - bNum;
+    if (aNum !== null) return -1;
+    if (bNum !== null) return 1;
+    return a.createdAt - b.createdAt;
+  });
+
 export const TeacherDashboard: React.FC = () => {
   
   // Auth Store
@@ -67,6 +84,7 @@ export const TeacherDashboard: React.FC = () => {
     loadRoomsByProject,
     updateStudentOrder,
     updateProjectRoomsConfig,
+    removeProjectRooms,
     subscribeRoomsByProject
   } = useGameStore();
 
@@ -229,23 +247,75 @@ export const TeacherDashboard: React.FC = () => {
     alert('모둠 평가가 완료되었습니다!');
   };
 
-  // 모든 모둠 설정 일괄 업데이트
+  // 모든 모둠 설정 일괄 업데이트. 모둠 수가 바뀌면 방을 추가하거나 번호가 큰 모둠부터 삭제한다.
   const handleUpdateRoomsConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !selectedProjectId) return;
 
+    const targetCount = Math.min(10, Math.max(1, groupCount || 1));
+    const orderedRooms = sortRoomsByGroupNumber(projectRooms);
+    const currentCount = orderedRooms.length;
+    const roomsToRemove = targetCount < currentCount ? orderedRooms.slice(targetCount) : [];
+    const roomsToKeep = roomsToRemove.length > 0 ? orderedRooms.slice(0, targetCount) : orderedRooms;
+
+    if (roomsToRemove.length > 0) {
+      const names = roomsToRemove.map((room) => room.title).join(', ');
+      const hasActivity = roomsToRemove.some((room) =>
+        (room.sentences?.length || 0) > 0 || Object.keys(room.students || {}).length > 0
+      );
+      const activityNote = hasActivity
+        ? '\n삭제되는 모둠에는 참여 학생이나 작성한 글이 있습니다.'
+        : '';
+      const confirmed = confirm(
+        `모둠 수를 ${currentCount}개에서 ${targetCount}개로 줄입니다.\n삭제되는 방: ${names}${activityNote}\n삭제한 방과 글은 되돌릴 수 없습니다. 계속할까요?`
+      );
+      if (!confirmed) return;
+    }
+
+    const usedNumbers = roomsToKeep
+      .map((room) => getRoomGroupNumber(room.title))
+      .filter((num): num is number => num !== null);
+    let nextNumber = usedNumbers.length > 0 ? Math.max(...usedNumbers) + 1 : roomsToKeep.length + 1;
+    const titlesToAdd: string[] = [];
+    for (let count = roomsToKeep.length; count < targetCount; count += 1) {
+      titlesToAdd.push(`${nextNumber}모둠`);
+      nextNumber += 1;
+    }
+
+    const roomConfig = {
+      maxStudents,
+      layoutMode,
+      endCondition,
+      sentenceLimit,
+      rubrics,
+      turnMode: turnMode || 'random' as const,
+      writeUnit,
+    };
+
     try {
-      await updateProjectRoomsConfig(user.uid, selectedProjectId, {
-        maxStudents,
-        layoutMode,
-        endCondition,
-        sentenceLimit,
-        rubrics,
-        turnMode,
-        writeUnit
-      });
+      if (roomsToRemove.length > 0) {
+        await removeProjectRooms(user.uid, selectedProjectId, roomsToRemove.map((room) => room.id));
+      }
+
+      await updateProjectRoomsConfig(user.uid, selectedProjectId, roomConfig);
+
+      for (const title of titlesToAdd) {
+        await createRoom({
+          title,
+          ...roomConfig,
+          teacherId: user.uid,
+          projectId: selectedProjectId,
+        });
+      }
+
       setShowEditRoomForm(false);
-      alert('이야기방 설정이 성공적으로 일괄 수정되었습니다! ⚙️');
+      if (targetCount > currentCount) {
+        alert(`모둠 수가 ${targetCount}개로 늘어났습니다. 새로 만든 방 코드를 학생에게 공유해 주세요.`);
+      } else if (targetCount < currentCount) {
+        alert(`모둠 수가 ${targetCount}개로 줄었습니다.`);
+      } else {
+        alert('이야기방 설정이 성공적으로 일괄 수정되었습니다! ⚙️');
+      }
     } catch (err: unknown) {
       alert(getErrorMessage(err, '설정 수정에 실패했습니다.'));
     }
@@ -731,8 +801,8 @@ export const TeacherDashboard: React.FC = () => {
                             </label>
                             <button
                               type="button"
-                              className="btn btn-secondary"
-                              style={{ padding: '4px 8px', fontSize: '0.8rem', boxShadow: 'none', border: '1.5px solid #ef9a9a', background: '#ffebee', color: '#c62828' }}
+                              className="btn btn-secondary btn-compact"
+                              style={{ border: '1.5px solid #ef9a9a', background: '#ffebee', color: '#c62828' }}
                               onClick={() => handleRemoveStudent(st.nickname)}
                             >
                               내보내기
@@ -742,30 +812,32 @@ export const TeacherDashboard: React.FC = () => {
                       ))}
                     </div>
                   ) : (
-                    <div className="student-grid" style={{ marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
                       {joinedStudents.map((st) => (
-                        <div key={st.nickname} className="student-tag" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                          <span className={st.isOnline ? 'student-online-dot' : 'student-offline-dot'} />
-                          <strong>{st.nickname}</strong>
-                          {studentWarningCounts[st.nickname] > 0 && (
-                            <span style={{ 
-                              fontSize: '0.75rem', 
-                              fontWeight: 'bold', 
-                              color: '#fff', 
-                              background: '#e53935', 
-                              padding: '1px 5px', 
-                              borderRadius: '4px',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '2px'
-                            }}>
-                              ⚠️ {studentWarningCounts[st.nickname]}회
-                            </span>
-                          )}
+                        <div key={st.nickname} className="student-tag" style={{ justifyContent: 'space-between', padding: '10px 14px', gap: '10px', flexWrap: 'wrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flexWrap: 'wrap' }}>
+                            <span className={st.isOnline ? 'student-online-dot' : 'student-offline-dot'} />
+                            <strong style={{ overflowWrap: 'anywhere' }}>{st.nickname}</strong>
+                            {studentWarningCounts[st.nickname] > 0 && (
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                fontWeight: 'bold', 
+                                color: '#fff', 
+                                background: '#e53935', 
+                                padding: '1px 5px', 
+                                borderRadius: '4px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '2px'
+                              }}>
+                                ⚠️ {studentWarningCounts[st.nickname]}회
+                              </span>
+                            )}
+                          </div>
                           <button
                             type="button"
-                            className="btn btn-secondary"
-                            style={{ padding: '2px 7px', fontSize: '0.75rem', boxShadow: 'none', border: '1.5px solid #ef9a9a', background: '#ffebee', color: '#c62828' }}
+                            className="btn btn-secondary btn-compact"
+                            style={{ border: '1.5px solid #ef9a9a', background: '#ffebee', color: '#c62828' }}
                             onClick={() => handleRemoveStudent(st.nickname)}
                           >
                             내보내기
@@ -1019,7 +1091,7 @@ export const TeacherDashboard: React.FC = () => {
                           value={groupCount}
                           onChange={(e) => setGroupCount(parseInt(e.target.value))}
                         >
-                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
+                          {GROUP_COUNT_OPTIONS.map(num => (
                             <option key={num} value={num}>{num}개 모둠 일괄 생성</option>
                           ))}
                         </select>
@@ -1152,7 +1224,7 @@ export const TeacherDashboard: React.FC = () => {
                     <div style={{ textAlign: 'left' }}>
                       <h3 style={{ margin: 0 }}>이 프로젝트 아래의 이야기방 관리</h3>
                       <p style={{ color: '#4caf50', fontSize: '0.95rem', fontWeight: 'bold', marginTop: '5px' }}>
-                        이미 활동방이 개설되어 운영 중입니다. 한 프로젝트에는 이야기방을 한 번만 개설하여 진행합니다.
+                        이미 활동방이 개설되어 운영 중입니다. 활동 설정 수정에서 모둠 수를 바꿀 수 있습니다.
                       </p>
                     </div>
                     <button 
@@ -1169,6 +1241,7 @@ export const TeacherDashboard: React.FC = () => {
                           setTurnMode(firstRoom.turnMode || 'random');
                           setWriteUnit(firstRoom.writeUnit || 'sentence');
                         }
+                        setGroupCount(Math.min(10, Math.max(1, projectRooms.length || 1)));
                         setShowEditRoomForm(!showEditRoomForm);
                       }}
                     >
@@ -1180,6 +1253,21 @@ export const TeacherDashboard: React.FC = () => {
                   {showEditRoomForm && (
                     <form onSubmit={handleUpdateRoomsConfig} style={{ borderTop: '2px dashed #ddd', marginTop: '20px', paddingTop: '20px', textAlign: 'left' }}>
                       <h3 style={{ color: '#673ab7', marginBottom: '15px' }}>⚙️ 이야기방 설정 수정 (모든 모둠에 일괄 적용)</h3>
+                      <div className="input-group">
+                        <label className="input-label">모둠 개수</label>
+                        <select
+                          className="select-field"
+                          value={groupCount}
+                          onChange={(e) => setGroupCount(parseInt(e.target.value, 10))}
+                        >
+                          {GROUP_COUNT_OPTIONS.map((num) => (
+                            <option key={num} value={num}>{num}개 모둠</option>
+                          ))}
+                        </select>
+                        <div style={{ marginTop: '6px', color: '#666', fontSize: '0.85rem', fontWeight: 700 }}>
+                          현재 {projectRooms.length}개입니다. 개수를 늘리면 같은 설정으로 새 모둠 방이 추가되고, 줄이면 번호가 큰 모둠부터 삭제됩니다.
+                        </div>
+                      </div>
                       <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                         <div className="input-group" style={{ flex: '1', minWidth: '150px' }}>
                           <label className="input-label">최대 학생 수</label>
