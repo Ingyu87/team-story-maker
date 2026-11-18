@@ -5,6 +5,9 @@ import { filterSentence } from '../utils/filter';
 import type { FilterResult } from '../utils/filter';
 import { PenTool, AlertCircle } from 'lucide-react';
 
+const getWriteUnitLabel = (unit?: 'sentence' | 'paragraph') =>
+  unit === 'paragraph' ? '문단' : '문장';
+
 export const StudentApp: React.FC = () => {
   const { roomId, nickname } = useParams<{ roomId: string; nickname: string }>();
   const navigate = useNavigate();
@@ -104,7 +107,7 @@ export const StudentApp: React.FC = () => {
     setError(null);
 
     // AI 필터링 실행
-    const filterResult = await filterSentence(inputText.trim());
+    const filterResult = await filterSentence(inputText.trim(), currentRoom?.writeUnit || 'sentence');
     setIsAiChecking(false);
 
     if (!filterResult.isSafe) {
@@ -123,7 +126,7 @@ export const StudentApp: React.FC = () => {
     if (editingSentenceId) {
       await useGameStore.getState().updateSentenceText(roomId, editingSentenceId, inputText.trim());
       setEditingSentenceId(null);
-      alert('문장이 수정되었습니다! ✏️');
+      alert(`${getWriteUnitLabel(currentRoom?.writeUnit)}이 수정되었습니다! ✏️`);
     } else {
       // 통과 시 제출
       await submitSentence(roomId, nickname, inputText.trim());
@@ -138,12 +141,13 @@ export const StudentApp: React.FC = () => {
   // 마지막으로 쓴 문장 삭제 (다시 쓰기)
   const handleDeleteLast = async () => {
     if (!roomId) return;
-    if (confirm('⚠️ 정말로 마지막으로 작성한 문장을 삭제하고 다시 쓰시겠습니까? (이전 사람의 차례로 돌아갑니다.)')) {
+    const unitLabel = getWriteUnitLabel(currentRoom?.writeUnit);
+    if (confirm(`⚠️ 정말로 마지막으로 작성한 ${unitLabel}을 삭제하고 다시 쓰시겠습니까? (이전 사람의 차례로 돌아갑니다.)`)) {
       await useGameStore.getState().deleteLastSentence(roomId);
       setInputText('');
       setEditingSentenceId(null);
       localStorage.removeItem(localStorageKey);
-      alert('마지막 문장이 삭제되어 다시 쓸 수 있게 되었습니다.');
+      alert(`마지막 ${unitLabel}이 삭제되어 다시 쓸 수 있게 되었습니다.`);
     }
   };
 
@@ -206,9 +210,9 @@ export const StudentApp: React.FC = () => {
             <PenTool size={20} />
             <div>
               {currentRoom.turnMode === 'free' ? (
-                <strong>🎉 자유 글쓰기 시간이에요! 모둠원들과 조율하며 원하는 문장을 적어 보세요.</strong>
+                <strong>🎉 자유 글쓰기 시간이에요! 모둠원들과 조율하며 원하는 {writeUnitLabel}을 적어 보세요.</strong>
               ) : isMyTurn ? (
-                <strong>🎉 야호! 지금은 내 차례예요! 멋진 문장을 한 개 써 주세요.</strong>
+                <strong>🎉 야호! 지금은 내 차례예요! 멋진 {writeUnitLabel}을 한 개 써 주세요.</strong>
               ) : (
                 <span>
                   지금은 <strong>{currentTurnPlayer || '친구'}</strong>의 차례예요. 다음 순서를 즐겁게 기다려 봐요!
@@ -303,7 +307,7 @@ export const StudentApp: React.FC = () => {
                 ))
               ) : (
                 <div style={{ padding: '40px 10px', textAlign: 'center', color: '#999' }}>
-                  아직 작성된 이야기가 없어요. 첫 번째 친구가 문장을 시작해 볼까요? 🌟
+                  아직 작성된 이야기가 없어요. 첫 번째 친구가 {writeUnitLabel}을 시작해 볼까요? 🌟
                 </div>
               )}
             </div>
@@ -384,7 +388,7 @@ export const StudentApp: React.FC = () => {
                 <div className="storybook-page" style={{ borderStyle: 'solid', borderColor: '#ffb703', background: '#fff' }}>
                   <p style={{ color: '#ffb703', fontWeight: 'bold' }}>새로운 이야기 페이지 📖</p>
                   {isMyTurn ? (
-                    <p style={{ fontSize: '1.1rem', color: '#555' }}>여기에 다음 문장을 이어 써 보세요!</p>
+                    <p style={{ fontSize: '1.1rem', color: '#555' }}>여기에 다음 {writeUnitLabel}을 이어 써 보세요!</p>
                   ) : (
                     <p style={{ color: '#888' }}>
                       {currentTurnPlayer} 친구가 다음 이야기를 흥미롭게 구상하고 있는 중이에요!
@@ -419,7 +423,7 @@ export const StudentApp: React.FC = () => {
           {currentRoom.sentences && currentRoom.sentences.length > 0 && currentRoom.sentences[currentRoom.sentences.length - 1].writer === nickname && (
             <div style={{ display: 'flex', gap: '15px', alignItems: 'center', background: '#e3f2fd', border: '2.5px solid #333', borderRadius: '12px', padding: '12px 18px', textAlign: 'left', boxShadow: '3px 3px 0 #333' }}>
               <span style={{ fontSize: '0.95rem', color: '#1565c0', flex: '1', fontWeight: '500' }}>
-                🙋‍♂️ 내가 방금 전송한 문장: <strong>"{currentRoom.sentences[currentRoom.sentences.length - 1].text}"</strong>
+                🙋‍♂️ 내가 방금 전송한 {writeUnitLabel}: <strong>"{currentRoom.sentences[currentRoom.sentences.length - 1].text}"</strong>
               </span>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button 
@@ -493,7 +497,7 @@ export const StudentApp: React.FC = () => {
                 className={`btn btn-primary ${((!isMyTurn && !editingSentenceId) || !inputText.trim() || isAiChecking) ? 'btn-disabled' : ''}`}
                 style={{ whiteSpace: 'nowrap', background: editingSentenceId ? '#ffb703' : undefined }}
               >
-                {isAiChecking ? 'AI 검사 중...' : editingSentenceId ? '✏️ 수정 완료' : '문장 전송 🚀'}
+                {isAiChecking ? 'AI 검사 중...' : editingSentenceId ? '✏️ 수정 완료' : `${writeUnitLabel} 전송 🚀`}
               </button>
               {editingSentenceId && (
                 <button
@@ -511,7 +515,7 @@ export const StudentApp: React.FC = () => {
               )}
             </form>
             <p style={{ fontSize: '0.85rem', color: '#888', marginTop: '10px', textAlign: 'left' }}>
-              💡 직접 손글씨를 적듯이 차근차근 문장을 입력해요. 붙여넣기는 금지되어 있어요.
+              💡 직접 손글씨를 적듯이 차근차근 {writeUnitLabel}을 입력해요. 붙여넣기는 금지되어 있어요.
             </p>
           </div>
 
@@ -533,7 +537,7 @@ export const StudentApp: React.FC = () => {
             
             {filterAlert.suggestedText && (
               <div style={{ background: '#f5f5f5', border: '1px solid #ddd', padding: '15px', borderRadius: '10px', marginBottom: '20px', textAlign: 'left' }}>
-                <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '5px', fontWeight: 'bold' }}>💡 인공지능 선생님 추천 문장:</p>
+                <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '5px', fontWeight: 'bold' }}>💡 인공지능 선생님 추천 {writeUnitLabel}:</p>
                 <p style={{ fontSize: '1.05rem', color: '#333', fontWeight: 'bold', fontStyle: 'italic' }}>
                   "{filterAlert.suggestedText}"
                 </p>
@@ -545,7 +549,7 @@ export const StudentApp: React.FC = () => {
                     setFilterAlert(null);
                   }}
                 >
-                  추천 문장 사용하기
+                  추천 {writeUnitLabel} 사용하기
                 </button>
               </div>
             )}

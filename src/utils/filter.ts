@@ -38,7 +38,8 @@ const KOREAN_SWEARS = [
  * 1차로 로컬에서 욕설, 자모음 반복, 키보드 연타를 즉시 감지하여 차단합니다.
  * API 호출 전에 실행되어 빠른 속도와 안정성을 보장합니다.
  */
-function localFilterCheck(text: string): FilterResult | null {
+function localFilterCheck(text: string, unit: 'sentence' | 'paragraph' = 'sentence'): FilterResult | null {
+  const unitLabel = unit === 'paragraph' ? '문단' : '문장';
   const normalized = text.replace(/\s+/g, '').toLowerCase();
 
   // 1. 욕설 검출
@@ -58,7 +59,7 @@ function localFilterCheck(text: string): FilterResult | null {
   if (repeatedCharRegex.test(normalized)) {
     return {
       isSafe: false,
-      reason: '똑같은 글자가 너무 여러 번 반복되었어요. 이야기의 흐름을 잇는 올바른 문장으로 다시 써 주세요!',
+      reason: `똑같은 글자가 너무 여러 번 반복되었어요. 이야기의 흐름을 잇는 올바른 ${unitLabel}으로 다시 써 주세요!`,
       suggestedText: text.replace(/([ㄱ-ㅎㅏ-ㅣ가-힣a-zA-Z0-9])\1{3,}/g, '$1')
     };
   }
@@ -84,7 +85,7 @@ function localFilterCheck(text: string): FilterResult | null {
     if (isKoreanChar) {
       return {
         isSafe: false,
-        reason: '한 글자만 쓰면 이야기가 이어지기 어려워요! 한 문장으로 조금 더 자세히 표현해 볼까요?',
+        reason: `한 글자만 쓰면 이야기가 이어지기 어려워요! 한 ${unitLabel}으로 조금 더 자세히 표현해 볼까요?`,
         suggestedText: singleChar + '했습니다.'
       };
     }
@@ -96,9 +97,9 @@ function localFilterCheck(text: string): FilterResult | null {
 /**
  * 현재는 로컬 필터만 사용합니다. Gemini API 비용/키가 준비되면 ENABLE_GEMINI_FILTER를 true로 바꾸면 됩니다.
  */
-export async function filterSentence(text: string): Promise<FilterResult> {
+export async function filterSentence(text: string, unit: 'sentence' | 'paragraph' = 'sentence'): Promise<FilterResult> {
   // 1. 로컬 필터 즉시 검사 (최우선순위)
-  const localResult = localFilterCheck(text);
+  const localResult = localFilterCheck(text, unit);
   if (localResult) {
     return localResult;
   }
@@ -110,7 +111,7 @@ export async function filterSentence(text: string): Promise<FilterResult> {
   try {
     const prompt = `
 당신은 초등학교 4학년 대상의 협동 글쓰기(이야기 릴레이) 수업을 지도하는 인공지능 교사 도우미입니다.
-학생이 제출한 문장에 대해 다음 사항을 평가하고 결과를 오직 **JSON 형식**으로만 응답해 주세요.
+학생이 제출한 ${unit === 'paragraph' ? '문단' : '문장'}에 대해 다음 사항을 평가하고 결과를 오직 **JSON 형식**으로만 응답해 주세요.
 
 [평가 기준]
 1. 욕설, 비속어, 비하하는 단어, 사이버 불링(누군가를 놀리거나 따돌리는 표현)이 포함되어 있는가?
